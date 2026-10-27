@@ -1,12 +1,12 @@
 --[[
-	STELLAR REMOTE v3  ·  SS-01 RAILGUN + SS-03 GUNGNIR
+	STELLAR REMOTE v4  ·  SS-01 RAILGUN + SS-03 GUNGNIR + SS-04 THE SHOOTING STAR
 	LocalScript for Delta. 100% client-side: only YOU see anything.
 
 	  1. Execute. You get a "Stellar Remote" tool (+ a small "SR" button on screen).
 	  2. Tap the tool (equip, then tap again) or the SR button -> menu opens.
 	  3. CUTSCENE: ON  = ~10 s cinematic (Earth > Saturn > Solar System > Milky Way > railgun > impact)
 	     CUTSCENE: OFF = no camera movement, you watch the red beam charge live (~10 s) and then hit.
-	  4. Aim the centre of your screen at the ground and press SS-01 · RAILGUN or SS-03 · GUNGNIR.
+	  4. Aim the centre of your screen at the ground and press SS-01, SS-03 or SS-04.
 ]]
 
 local Players      = game:GetService("Players")
@@ -33,6 +33,11 @@ local CONFIG = {
 	HEX_RADIUS    = 900,    -- SS-03: how far the orange hexagons spread across the ground
 	HEX_CELL      = 26,     -- SS-03: hexagon size (bigger = fewer parts)
 	SPEAR_STAYS   = 90,     -- SS-03: seconds the collidable spear stays standing in the ground
+	DIPPER_SCALE  = 28,     -- SS-04: studs per degree of the Big Dipper (28 = about 650 studs wide)
+	STAR_HEIGHT   = 650,    -- SS-04: how high above the ground the 7 stars hang
+	HOP_TIME      = 0.2,    -- SS-04: seconds the camera spends on each star
+	SKY_STAY      = 15,     -- SS-04: seconds the glowing dipper + night sky stay after the finale
+	LINES_STAY    = 30,     -- SS-04: seconds the burned holes + dipper lines stay on the ground
 	SOUNDS        = true,
 	LASER_COLOR   = Color3.fromRGB(255, 25, 25),
 	BEAM_CORE     = Color3.fromRGB(255, 255, 255),
@@ -2035,6 +2040,636 @@ local function runSS03()
 end
 
 ------------------------------------------------------------------------
+-- SS-04 · THE SHOOTING STAR  (the seven stars of the Big Dipper)
+-- 7 lasers form the Big Dipper on the map > camera rises, sky goes black > camera hops to each star
+-- (0.2 s each) and a white ritual ring forms > camera locks on the dipper > the stars fire purple lasers
+-- one by one (name shown on screen at every hit) > the holes link into a dipper on the ground >
+-- all 7 fire at once > { CONSTELLATION BURNED } > camera returns, night sky keeps the glowing dipper 15 s.
+------------------------------------------------------------------------
+SND.ping = "rbxasset://sounds/electronicpingshort.wav"
+
+local DIPPER_RAW = {
+	{ "DUBHE", 11.78, 5.75 }, { "MERAK", 12.05, 0.38 }, { "PHECDA", 4.78, -2.31 }, { "MEGREZ", 1.76, 1.03 },
+	{ "ALIOTH", -3.63, -0.04 }, { "MIZAR", -7.81, -1.07 }, { "ALKAID", -11.11, -6.69 },
+}
+local DIPPER = {} -- centred star chart coordinates (degrees on the sky)
+do
+	local mx, my = 0, 0
+	for _, d in ipairs(DIPPER_RAW) do mx += d[2]; my += d[3] end
+	mx /= #DIPPER_RAW
+	my /= #DIPPER_RAW
+	for i, d in ipairs(DIPPER_RAW) do DIPPER[i] = { name = d[1], x = d[2] - mx, y = d[3] - my } end
+end
+local DIPPER_EDGES = { { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 1 }, { 4, 5 }, { 5, 6 }, { 6, 7 } }
+local RING_WHITE = Color3.fromRGB(245, 240, 255)
+
+local function purpleLayers()
+	return {
+		{ color = Color3.fromRGB(245, 228, 255), alpha = 0 },
+		{ color = Color3.fromRGB(180, 90, 255),  alpha = 0.3 },
+		{ color = Color3.fromRGB(120, 40, 230),  alpha = 0.75 },
+	}
+end
+local function markerLayers()
+	return {
+		{ color = Color3.new(1, 1, 1),           alpha = 0 },
+		{ color = Color3.fromRGB(205, 175, 255), alpha = 0.4 },
+		{ color = Color3.fromRGB(150, 110, 255), alpha = 0.85 },
+	}
+end
+
+local function easeOutBack(t)
+	t = math.clamp(t, 0, 1)
+	local c1 = 1.70158
+	local c3 = c1 + 1
+	return 1 + c3 * (t - 1) ^ 3 + c1 * (t - 1) ^ 2
+end
+
+-- night sky: black with stars, ground still visible
+local function nightLighting()
+	Lighting.ClockTime = 0
+	Lighting.Brightness = 1.2
+	Lighting.Ambient = Color3.fromRGB(58, 58, 96)
+	Lighting.OutdoorAmbient = Color3.fromRGB(72, 74, 118)
+	Lighting.FogEnd = 1e6
+	Lighting.FogStart = 1e5
+	Lighting.ExposureCompensation = 0
+	if L0.atmo then
+		local a = L0.atmo.inst
+		a.Density = L0.atmo.Density * 0.25; a.Haze = 0; a.Glare = 0
+	end
+	local sky = L0.sky and L0.sky.inst
+	if not sky then
+		sky = Instance.new("Sky")
+		sky.Parent = Lighting
+		L0.createdSky = sky
+	end
+	for _, fc in ipairs(SKY_FACES) do sky[fc] = CONFIG.BLACK_TEXTURE end
+	sky.StarCount = 6000
+	sky.CelestialBodiesShown = false
+	if L0.clouds then L0.clouds.inst.Enabled = false end
+end
+
+-- ---------------------------------------------------------------- star + ritual rings + ground marker
+local function buildSevenStar(parent, st)
+	local pos = st.spos
+	local m = Instance.new("Model")
+	m.Name = "Star_" .. st.name
+	st.parts = {}
+	local function add(shape, size, color, transp, cf)
+		local p = part({ Shape = shape, Size = size, Color = color, Material = NEONM, Transparency = 1, CFrame = cf or CFrame.new(pos) }, m)
+		st.parts[#st.parts + 1] = { p = p, base = transp }
+		return p
+	end
+	local core = add(BALLS, V(44), Color3.new(1, 1, 1), 0)
+	add(BALLS, V(150), Color3.fromRGB(200, 150, 255), 0.8)
+	add(nil, Vector3.new(300, 5, 5), Color3.fromRGB(235, 215, 255), 0.1)
+	add(nil, Vector3.new(5, 300, 5), Color3.fromRGB(235, 215, 255), 0.1)
+	add(nil, Vector3.new(5, 5, 300), Color3.fromRGB(235, 215, 255), 0.1)
+	add(nil, Vector3.new(190, 3, 3), RING_WHITE, 0.25, CFrame.new(pos) * CFrame.Angles(0, 0, math.rad(45)))
+	add(nil, Vector3.new(190, 3, 3), RING_WHITE, 0.25, CFrame.new(pos) * CFrame.Angles(0, 0, math.rad(-45)))
+	m.WorldPivot = CFrame.new(pos)
+	m.Parent = parent
+	m:ScaleTo(0.01)
+	st.model = m
+	local em = Instance.new("ParticleEmitter")
+	em.Rate = 0
+	em.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(190, 120, 255))
+	em.LightEmission = 1
+	em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 7), NumberSequenceKeypoint.new(1, 0) })
+	em.Lifetime = NumberRange.new(0.5, 1.0)
+	em.Speed = NumberRange.new(60, 180)
+	em.SpreadAngle = Vector2.new(180, 180)
+	em.Parent = core
+	st.sparks = em
+
+	-- white ritual circle: outer ring + runes, inner ring + hexagram (they spin in opposite directions)
+	local ro, ri = Instance.new("Model"), Instance.new("Model")
+	ro.Name, ri.Name = "RitualOuter", "RitualInner"
+	st.ringParts = {}
+	local function rp(model, cf, size)
+		st.ringParts[#st.ringParts + 1] = part({ Size = size, Color = RING_WHITE, Material = NEONM, Transparency = 1, CFrame = CFrame.new(pos) * cf }, model)
+	end
+	local function band(model, R, width, segs)
+		local arc = 2 * math.pi * R / segs * 1.08
+		for i = 1, segs do
+			local a = (i / segs) * math.pi * 2
+			rp(model, CFrame.new(math.cos(a) * R, 0, math.sin(a) * R) * CFrame.Angles(0, -a, 0), Vector3.new(width, 1.6, arc))
+		end
+	end
+	band(ro, 120, 6, 64)
+	band(ri, 84, 3, 40)
+	for i = 1, 8 do
+		local a = (i / 8) * math.pi * 2
+		rp(ro, CFrame.new(math.cos(a) * 100, 0, math.sin(a) * 100) * CFrame.Angles(0, -a, 0), Vector3.new(18, 1.6, 3.5))
+	end
+	for tri = 0, 1 do
+		for j = 0, 2 do
+			local a0 = math.rad(90 + tri * 60 + j * 120)
+			local a1 = math.rad(90 + tri * 60 + (j + 1) * 120)
+			local v0 = Vector3.new(math.cos(a0) * 84, 0, math.sin(a0) * 84)
+			local v1 = Vector3.new(math.cos(a1) * 84, 0, math.sin(a1) * 84)
+			local mid = (v0 + v1) / 2
+			rp(ri, CFrame.lookAt(mid, mid + (v1 - v0)), Vector3.new(2.5, 1.4, (v1 - v0).Magnitude))
+		end
+	end
+	for _, rm in ipairs({ ro, ri }) do
+		rm.WorldPivot = CFrame.new(pos)
+		rm.Parent = parent
+		rm:ScaleTo(0.01)
+	end
+	st.ringO, st.ringI = ro, ri
+end
+
+-- spawn animation: star pops in, ritual circle opens up (runs on its own, ~0.55 s)
+local function spawnSevenStar(st)
+	task.spawn(function()
+		if st.sparks then st.sparks:Emit(45) end
+		local flash = part({ Shape = BALLS, Size = V(30), Position = st.spos, Color = Color3.new(1, 1, 1), Material = NEONM, Transparency = 0 }, st.model.Parent)
+		TweenService:Create(flash, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = V(520), Transparency = 1 }):Play()
+		Debris:AddItem(flash, 1)
+		runFor(0.55, function(a)
+			local e = math.max(easeOutBack(a), 0.01)
+			local alpha = math.clamp(a * 3, 0, 1)
+			st.model:ScaleTo(e)
+			if st.ringO and st.ringO.Parent then
+				st.ringO:ScaleTo(e)
+				st.ringI:ScaleTo(math.max(easeOutBack(math.clamp(a * 1.15 - 0.1, 0, 1)), 0.01))
+				for _, p in ipairs(st.ringParts) do p.Transparency = 1 - alpha * 0.9 end
+			end
+			for _, e2 in ipairs(st.parts) do e2.p.Transparency = 1 - alpha * (1 - e2.base) end
+		end)
+	end)
+end
+
+local function buildMarker(parent, st)
+	local g, n = st.gpos, st.gnorm
+	st.core = part({ Shape = CYLS, Size = Vector3.new(0.2, 14, 14), CFrame = flatCF(g + n * 0.1, n), Color = Color3.fromRGB(190, 120, 255), Material = NEONM, Transparency = 0.15 }, parent)
+	st.pulses = {}
+	for i = 1, 3 do
+		st.pulses[i] = part({ Shape = CYLS, Size = Vector3.new(0.15, 4, 4), CFrame = flatCF(g + n * (0.14 + i * 0.03), n), Color = Color3.fromRGB(235, 215, 255), Material = NEONM, Transparency = 1 }, parent)
+	end
+	st.marker = makeRig(parent, 1, markerLayers())
+	st.fire = makeRig(parent, 1, purpleLayers())
+end
+
+-- one tick of everything a star does (rings spin, marker pulses, laser fires)
+local function updateSevenStar(st, now)
+	if st.ringO and st.ringO.Parent then
+		local c = CFrame.new(st.spos)
+		st.ringO:PivotTo(c * CFrame.Angles(0, now * 0.7, 0))
+		st.ringI:PivotTo(c * CFrame.Angles(0, -now * 1.1, 0))
+	end
+	if st.moving and st.model then st.model:PivotTo(CFrame.new(st.spos)) end
+	local s, g = st.spos, st.gpos
+	local state = st.state
+	local hideFn = function() return { 1, 1, 1 } end
+	if state == "marker" then
+		local rv = st.rv or 0
+		if rv < 0.02 then
+			updateRig(st.marker, g, g, hideFn)
+		else
+			local pl = 1 + 0.35 * math.sin(now * 8 + st.idx)
+			updateRig(st.marker, g, s, function() return { 0.9 * pl * rv, 3.6 * pl * rv, 8 * pl * rv } end)
+		end
+		if st.core and st.core.Parent then
+			local k = math.max(rv, 0.02)
+			local d = 14 * (1 + 0.1 * math.sin(now * 9)) * k
+			st.core.Size = Vector3.new(0.2, d, d)
+			for i, p in ipairs(st.pulses) do
+				local ph = (now * 0.9 + st.idx * 0.17 + i / 3) % 1
+				local dd = (6 + 34 * ph) * k
+				p.Size = Vector3.new(0.15, dd, dd)
+				p.Transparency = 1 - rv * 0.75 * (1 - ph)
+			end
+		end
+		return
+	end
+	-- fired: marker circle + thin marker laser are replaced by the purple laser
+	if st.core and st.core.Parent then
+		st.core.Transparency = 1
+		for _, p in ipairs(st.pulses) do p.Transparency = 1 end
+	end
+	updateRig(st.marker, g, g, hideFn)
+	if state == "firing" then
+		local e = now - st.t0
+		local head = math.clamp(e / 0.14, 0, 1)
+		local th = 1 - math.clamp((e - 0.14) / 0.3, 0, 1)
+		updateRig(st.fire, s, s:Lerp(g, head), function() return { 3 + 12 * th, 8 + 28 * th, 16 + 46 * th } end)
+	elseif state == "finale" then
+		local e = now - st.t0
+		local k = 1 - smooth((e - 0.5) / 1.3)
+		updateRig(st.fire, s, g, function() return { 3 + 31 * k, 8 + 82 * k, 16 + 154 * k } end)
+	else -- "done": lasers gone, the stars just twinkle
+		updateRig(st.fire, g, g, hideFn)
+		if st.parts and st.parts[2] then st.parts[2].p.Transparency = 0.74 + 0.1 * math.sin(now * 3 + st.idx) end
+	end
+end
+
+-- ---------------------------------------------------------------- hole where a laser lands
+local function strikeHole(st, gfold, T, UPV)
+	local g, n = st.gpos, st.gnorm
+	local R0 = 30
+	st.rim = part({ Shape = CYLS, Size = Vector3.new(0.1, R0 * 2.3, R0 * 2.3), CFrame = flatCF(g + n * 0.15, n), Color = Color3.fromRGB(180, 90, 255), Material = NEONM, Transparency = 0.2 }, gfold)
+	st.pit = part({ Shape = CYLS, Size = Vector3.new(0.1, R0 * 2, R0 * 2), CFrame = flatCF(g + n * 0.3, n), Color = Color3.fromRGB(8, 0, 14) }, gfold)
+	st.pitGlow = part({ Shape = CYLS, Size = Vector3.new(0.1, R0 * 0.7, R0 * 0.7), CFrame = flatCF(g + n * 0.45, n), Color = Color3.fromRGB(235, 210, 255), Material = NEONM, Transparency = 0.1 }, gfold)
+	if CONFIG.CARVE_LAND then
+		pcall(function() workspace.Terrain:FillBall(g, 26, Enum.Material.Air) end)
+		local er = makeEraser(g, 14, 36, UPV)
+		er(-1)
+	end
+	local bp = part({ Size = Vector3.new(10, 1, 10), Position = g + n * 1, Transparency = 1 }, gfold)
+	local em = Instance.new("ParticleEmitter")
+	em.Rate = 0
+	em.Color = ColorSequence.new(Color3.fromRGB(245, 225, 255), Color3.fromRGB(150, 60, 255))
+	em.LightEmission = 1
+	em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 3), NumberSequenceKeypoint.new(1, 0) })
+	em.Lifetime = NumberRange.new(0.8, 1.8)
+	em.Speed = NumberRange.new(40, 140)
+	em.SpreadAngle = Vector2.new(55, 55)
+	em.Acceleration = Vector3.new(0, -60, 0)
+	em.EmissionDirection = Enum.NormalId.Top
+	em.Parent = bp
+	em:Emit(70)
+	Debris:AddItem(bp, 4)
+	local fl = part({ Shape = CYLS, Size = Vector3.new(0.3, 6, 6), CFrame = flatCF(g + n * 0.6, n), Color = Color3.fromRGB(240, 225, 255), Material = NEONM, Transparency = 0.1 }, gfold)
+	TweenService:Create(fl, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(0.3, 190, 190), Transparency = 1 }):Play()
+	Debris:AddItem(fl, 1)
+end
+
+-- ---------------------------------------------------------------- glowing dipper lines on the ground
+local function buildLines(gfold, stars, T, rp)
+	local segs = {}
+	local H = CONFIG.STAR_HEIGHT
+	for _, e in ipairs(DIPPER_EDGES) do
+		local a, b = stars[e[1]].gpos, stars[e[2]].gpos
+		local dist = Vector3.new(b.X - a.X, 0, b.Z - a.Z).Magnitude
+		local n = math.max(2, math.ceil(dist / 14))
+		local pts, prevY = {}, a.Y
+		for j = 0, n do
+			local t = j / n
+			local x, z = a.X + (b.X - a.X) * t, a.Z + (b.Z - a.Z) * t
+			local hit = workspace:Raycast(Vector3.new(x, T.Y + H, z), Vector3.new(0, -(H + 900), 0), rp)
+			local y = hit and hit.Position.Y or prevY
+			prevY = y
+			pts[j + 1] = Vector3.new(x, y, z)
+		end
+		for j = 1, n do
+			local p0, p1 = pts[j], pts[j + 1]
+			local m = (p0 + p1) / 2 + Vector3.new(0, 0.35, 0)
+			local dir = p1 - p0
+			local len = dir.Magnitude + 1.4
+			local cf = CFrame.lookAt(m, m + dir)
+			local dark = part({ Size = Vector3.new(15, 0.5, len), CFrame = cf, Color = Color3.fromRGB(8, 0, 14), Transparency = 1 }, gfold)
+			local glow = part({ Size = Vector3.new(6, 0.6, len), CFrame = cf * CFrame.new(0, 0.12, 0), Color = Color3.fromRGB(190, 100, 255), Material = NEONM, Transparency = 1 }, gfold)
+			segs[#segs + 1] = { dark = dark, glow = glow }
+		end
+	end
+	return segs
+end
+
+-- ---------------------------------------------------------------- THE SS-04 SEQUENCE
+local function runSS04()
+	if busy then return end
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hum and root) then return end
+	busy = true
+	if menu then menu.close() end
+	local useCut = env.__StellarCutsceneOn ~= false
+	local S = newSession(useCut, hum)
+	local hud, cam, fx = S.hud, S.cam, S.fx
+	local rootPos = root.Position
+	local rfold = S.realFolder
+
+	local ok, err = pcall(function()
+		sfx(SND.click, 1.2, 1, 3)
+		if env.__StellarSevenGround then pcall(function() env.__StellarSevenGround:Destroy() end) end
+		local gfold = Instance.new("Folder")
+		gfold.Name = "StellarSevenGround"
+		gfold.Parent = workspace
+		env.__StellarSevenGround = gfold
+
+		-- ---------- aim: centre of the screen ----------
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { char }
+		local vs = cam.ViewportSize
+		local ray = cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+		local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
+		local T
+		if res then
+			T = res.Position
+		else
+			local p = ray.Origin + ray.Direction * 150
+			local down = workspace:Raycast(p + Vector3.new(0, 200, 0), Vector3.new(0, -800, 0), params)
+			T = down and down.Position or p
+		end
+
+		-- dipper orientation: "up" on the chart points away from you
+		local f = Vector3.new(T.X - rootPos.X, 0, T.Z - rootPos.Z)
+		if f.Magnitude < 5 then
+			local lv = cam.CFrame.LookVector
+			f = Vector3.new(lv.X, 0, lv.Z)
+		end
+		if f.Magnitude < 0.1 then f = Vector3.new(0, 0, -1) end
+		f = f.Unit
+		local right = f:Cross(UP)
+
+		-- ---------- the 7 stars: where they land, where they hang ----------
+		local K, H = CONFIG.DIPPER_SCALE, CONFIG.STAR_HEIGHT
+		local stars = {}
+		for i, d in ipairs(DIPPER) do
+			local x = T.X + right.X * d.x * K + f.X * d.y * K
+			local z = T.Z + right.Z * d.x * K + f.Z * d.y * K
+			local hit = workspace:Raycast(Vector3.new(x, T.Y + H, z), Vector3.new(0, -(H + 900), 0), params)
+			local gn = hit and hit.Normal or UP
+			if gn.Y < 0.3 then gn = UP end
+			stars[i] = {
+				idx = i, name = d.name, state = "marker", rv = 0,
+				gpos = hit and hit.Position or Vector3.new(x, T.Y, z), gnorm = gn,
+				spos = Vector3.new(x, T.Y + H, z),
+			}
+		end
+		local Cs = Vector3.new(T.X, T.Y + H, T.Z)
+		local Gc = Vector3.new(0, 0, 0)
+		for _, st in ipairs(stars) do Gc += st.gpos end
+		Gc /= #stars
+		local W = Cs - f * 1250 + Vector3.new(0, 450, 0)          -- wide shot of the dipper in the sky
+		local Clook = Cs - Vector3.new(0, 120, 0)
+		local W2 = Gc - f * 1100 + Vector3.new(0, 900, 0)         -- high shot of the ground dipper
+		local Mid = (Gc + Cs) / 2
+
+		-- ---------- little helpers ----------
+		local shakeAmp = 0
+		local function camSet(cf, fov)
+			if not useCut then return end
+			cam.CFrame = cf * shakeRot(shakeAmp)
+			cam.FieldOfView = fov
+			shakeAmp = shakeAmp * 0.9
+		end
+		local function blur(v) if fx then fx.blur.Size = v end end
+		local mid = Instance.new("TextLabel")
+		mid.BackgroundTransparency = 1
+		mid.Font = Enum.Font.Code
+		mid.TextSize = 54
+		mid.TextColor3 = Color3.fromRGB(232, 205, 255)
+		mid.TextStrokeColor3 = Color3.fromRGB(80, 20, 140)
+		mid.TextStrokeTransparency = 1
+		mid.TextTransparency = 1
+		mid.AnchorPoint = Vector2.new(0.5, 0.5)
+		mid.Position = UDim2.new(0.5, 0, 0.5, 0)
+		mid.Size = UDim2.new(0.9, 0, 0, 60)
+		mid.ZIndex = 9
+		mid.Parent = hud.gui
+		local function say(text)
+			mid.Text = text
+			mid.TextTransparency = 0
+			mid.TextStrokeTransparency = 0.5
+			TweenService:Create(mid, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In, 0, false, 0.12), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		end
+		local function enterNight()
+			nightLighting()
+			S.lightingActive = true
+		end
+
+		-- ---------- setup ----------
+		saveLighting()
+		hud.flash.BackgroundColor3 = Color3.new(0, 0, 0)
+		if useCut then
+			setControls(false)
+			hum.WalkSpeed = 0; hum.JumpPower = 0; hum.JumpHeight = 0
+			cam.CameraType = Enum.CameraType.Scriptable
+			hud.bars(true)
+		end
+		hud.setLabel("SS-04  ·  THE SHOOTING STAR")
+		hud.setSub("SEVEN STARS")
+
+		for _, st in ipairs(stars) do buildMarker(rfold, st) end
+		local built = false
+		task.spawn(function()
+			for _, st in ipairs(stars) do
+				local okb, e2 = pcall(buildSevenStar, rfold, st)
+				if not okb then warn("[StellarRemote] star build failed: " .. tostring(e2)) end
+				task.wait()
+			end
+			built = true
+		end)
+		S.live[#S.live + 1] = RunService.RenderStepped:Connect(function()
+			local now = os.clock()
+			for _, st in ipairs(stars) do updateSevenStar(st, now) end
+		end)
+
+		-- ---------- 7 lasers appear on the map, camera goes up the sky, the sky turns black ----------
+		sfx(SND.launch, 1.4, 0.8, 6)
+		local startCF = cam.CFrame
+		runFor(TS(1.5), function(a, dt, e)
+			if useCut then
+				local k = smooth(a)
+				local pos = startCF.Position:Lerp(W, k) + Vector3.new(0, 220 * math.sin(math.pi * k), 0)
+				local look = (startCF * CFrame.new(0, 0, -300)).Position:Lerp(Cs - Vector3.new(0, 200, 0), k)
+				cam.CFrame = CFrame.lookAt(pos, look)
+				cam.FieldOfView = 70 + 12 * math.sin(math.pi * k)
+				blur(10 * math.sin(math.pi * k))
+			end
+			for i, st in ipairs(stars) do st.rv = math.clamp((e - (i - 1) * 0.05) / 0.25, 0, 1) end
+			if a > 0.78 then hud.flash.BackgroundTransparency = 1 - smooth((a - 0.78) / 0.22) end
+		end)
+		hud.flash.BackgroundTransparency = 0
+		for _, st in ipairs(stars) do st.rv = 1 end
+		enterNight()
+		while not built do RunService.RenderStepped:Wait() end
+		blur(0)
+
+		-- ---------- camera hops star to star (0.2 s each); every star forms a white ritual ring ----------
+		for i, st in ipairs(stars) do
+			spawnSevenStar(st)
+			sfx(SND.ping, 1.4, 0.8 + 0.1 * i, 2)
+			hud.setSub(("RITUAL  %d / 7   ·   %s"):format(i, st.name))
+			runFor(CONFIG.HOP_TIME, function(a, dt, e)
+				local base = st.spos - f * 170 + Vector3.new(0, 105, 0)
+				local pos = base:Lerp(st.spos - f * 140 + Vector3.new(0, 96, 0), a)
+				camSet(CFrame.lookAt(pos, st.spos), 62)
+				if i == 1 then hud.flash.BackgroundTransparency = smooth(e / 0.15) end
+			end)
+		end
+
+		-- ---------- lock onto the dipper ----------
+		hud.setLabel("")
+		hud.setSub("")
+		local lastCF = cam.CFrame
+		runFor(TS(0.6), function(a)
+			local k = smooth(a)
+			camSet(CFrame.lookAt(lastCF.Position:Lerp(W, k), (lastCF * CFrame.new(0, 0, -300)).Position:Lerp(Clook, k)), 70 - 4 * a)
+		end)
+
+		-- ---------- the stars fire purple lasers one by one; each hit shows the star's name ----------
+		local gap = TS(0.5)
+		runFor(gap * 7 + 0.45, function(a, dt, e)
+			for i, st in ipairs(stars) do
+				if not st.fireStarted and e >= (i - 1) * gap then
+					st.fireStarted = true
+					st.state = "firing"
+					st.t0 = os.clock()
+					sfx(SND.shot, 1.6, 0.9 + 0.08 * i, 3)
+				end
+				if st.fireStarted and not st.hit and os.clock() - st.t0 >= 0.14 then
+					st.hit = true
+					strikeHole(st, gfold, T, UP)
+					say(st.name)
+					sfx(SND.boom, 1.3, 1.1 + 0.05 * i, 4)
+					shakeAmp = 0.012
+				end
+			end
+			local k = smooth(a)
+			camSet(CFrame.lookAt(W:Lerp(W + f * 70 + Vector3.new(0, -25, 0), k), Clook), 66)
+		end)
+
+		-- ---------- the holes link into a dipper on the ground ----------
+		hud.setSub("LINKING THE CONSTELLATION")
+		local segs = buildLines(gfold, stars, T, params)
+		sfx(SND.whoosh, 1.2, 1.2, 4)
+		local fromCF = cam.CFrame
+		runFor(TS(1.1), function(a)
+			local k = smooth(a)
+			camSet(CFrame.lookAt(fromCF.Position:Lerp(W2, k), (fromCF * CFrame.new(0, 0, -600)).Position:Lerp(Mid, k)), 66 + 4 * k)
+			local count = math.floor(a * #segs * 1.05)
+			for i = 1, math.min(count, #segs) do
+				segs[i].dark.Transparency = 0.1
+				segs[i].glow.Transparency = 0.05
+			end
+		end)
+		for _, sg in ipairs(segs) do sg.dark.Transparency = 0.1; sg.glow.Transparency = 0.05 end
+		hud.setSub("")
+
+		-- ---------- ALL 7 FIRE AT ONCE ----------
+		local now0 = os.clock()
+		for _, st in ipairs(stars) do
+			st.state = "finale"
+			st.t0 = now0
+			if CONFIG.CARVE_LAND then
+				pcall(function() workspace.Terrain:FillBall(st.gpos, 60, Enum.Material.Air) end)
+				local er = makeEraser(st.gpos, 24, 75, UP)
+				er(-1)
+			end
+			for _, p in ipairs({ st.rim, st.pit, st.pitGlow }) do
+				local sz = p.Size
+				local ratio = 62 / 30
+				TweenService:Create(p, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(0.1, sz.Y * ratio, sz.Z * ratio) }):Play()
+			end
+			st.sparks:Emit(60)
+		end
+		sfx(SND.boom, 3, 0.5, 10)
+		sfx(SND.shot, 3, 0.4, 10)
+		hud.flash.BackgroundColor3 = Color3.fromRGB(240, 225, 255)
+		hud.flash.BackgroundTransparency = 0.2
+		TweenService:Create(hud.flash, TweenInfo.new(0.7), { BackgroundTransparency = 1 }):Play()
+		shakeAmp = 0.035
+		local textShown = false
+		runFor(TS(1.7), function(a, dt, e)
+			camSet(CFrame.lookAt(W2, Mid), 70 + 10 * math.sin(math.min(a * 3, 1) * math.pi * 0.5))
+			blur(10 * (1 - a))
+			local flare = 1 - smooth((e - 0.2) / 1.1)
+			for _, sg in ipairs(segs) do
+				sg.glow.Color = Color3.fromRGB(190, 100, 255):Lerp(Color3.new(1, 1, 1), flare)
+			end
+			if a > 0.25 and not textShown then
+				textShown = true
+				hud.title.TextSize = 40
+				hud.title.TextColor3 = Color3.fromRGB(235, 210, 255)
+				hud.setLabel("{ CONSTELLATION BURNED }")
+			end
+			if a > 0.88 then
+				hud.flash.BackgroundColor3 = Color3.fromRGB(240, 225, 255)
+				hud.flash.BackgroundTransparency = 1 - smooth((a - 0.88) / 0.12)
+			end
+		end)
+		hud.flash.BackgroundTransparency = 0
+
+		-- ritual circles + ground markers are gone, lasers off, stars stay
+		for _, st in ipairs(stars) do
+			st.state = "done"
+			if st.ringO then st.ringO:Destroy(); st.ringI:Destroy(); st.ringO, st.ringI = nil, nil end
+			if st.core then st.core:Destroy(); for _, p in ipairs(st.pulses) do p:Destroy() end; st.core = nil end
+		end
+
+		-- the holes and lines stay on the ground for a while, pulsing, then fade out
+		task.spawn(function()
+			local t0 = os.clock()
+			while gfold.Parent and os.clock() - t0 < CONFIG.LINES_STAY do
+				local k = 0.5 + 0.5 * math.sin((os.clock() - t0) * 3)
+				for _, sg in ipairs(segs) do sg.glow.Color = Color3.fromRGB(150, 70, 235):Lerp(Color3.fromRGB(215, 150, 255), k) end
+				task.wait(0.1)
+			end
+			local t1 = os.clock()
+			while gfold.Parent and os.clock() - t1 < 3 do
+				local x = (os.clock() - t1) / 3
+				for _, sg in ipairs(segs) do
+					sg.dark.Transparency = 0.1 + 0.9 * x
+					sg.glow.Transparency = 0.05 + 0.95 * x
+				end
+				task.wait(0.1)
+			end
+			if gfold.Parent then gfold:Destroy() end
+		end)
+
+		-- ---------- camera back to normal; the night sky keeps the glowing dipper ----------
+		S.restorePlayer()
+		S.resetFx()
+		hud.bars(false)
+		TweenService:Create(hud.flash, TweenInfo.new(0.6), { BackgroundTransparency = 1 }):Play()
+		hud.setSub("")
+		task.delay(2.6, function() hud.setLabel("") end)
+
+		-- the 7 stars glide into a Big Dipper hanging in the sky ahead of you
+		local Cb = Vector3.new(rootPos.X, rootPos.Y, rootPos.Z) + f * 1300 + Vector3.new(0, 750, 0)
+		for i, st in ipairs(stars) do
+			st.sposStart = st.spos
+			st.bpos = Cb + right * (DIPPER[i].x * 40) + UP * (DIPPER[i].y * 40)
+			st.moving = true
+		end
+		local skyLines = {}
+		for _, e in ipairs(DIPPER_EDGES) do
+			skyLines[#skyLines + 1] = { e[1], e[2], part({ Size = Vector3.new(3, 3, 10), Color = Color3.fromRGB(215, 190, 255), Material = NEONM, Transparency = 1 }, rfold) }
+		end
+		local function placeSkyLines(tr)
+			for _, l in ipairs(skyLines) do
+				local a, b = stars[l[1]].spos, stars[l[2]].spos
+				l[3].Size = Vector3.new(3, 3, math.max((b - a).Magnitude - 70, 1))
+				l[3].CFrame = CFrame.lookAt((a + b) / 2, b)
+				l[3].Transparency = tr
+			end
+		end
+		runFor(1.2, function(a)
+			local k = smooth(a)
+			for _, st in ipairs(stars) do st.spos = st.sposStart:Lerp(st.bpos, k) end
+			placeSkyLines(1 - 0.65 * k)
+		end)
+		for _, st in ipairs(stars) do st.moving = false end
+
+		task.wait(CONFIG.SKY_STAY)
+
+		-- ---------- the dipper disappears, the sky returns ----------
+		runFor(1.5, function(a)
+			for _, st in ipairs(stars) do st.model:ScaleTo(math.max(1 - a, 0.01)) end
+			placeSkyLines(0.35 + 0.65 * a)
+		end)
+		hud.flash.BackgroundColor3 = Color3.new(0, 0, 0)
+		hud.flash.BackgroundTransparency = 1
+		TweenService:Create(hud.flash, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
+		task.wait(0.3)
+		S.leaveSpace()
+		TweenService:Create(hud.flash, TweenInfo.new(0.4), { BackgroundTransparency = 1 }):Play()
+		task.wait(0.45)
+	end)
+
+	if not ok then warn("[StellarRemote] " .. tostring(err)) end
+	S.restoreAll()
+	busy = false
+end
+
+------------------------------------------------------------------------
 -- MENU (opens when you click/tap the remote)
 ------------------------------------------------------------------------
 local function buildMenu()
@@ -2097,8 +2732,10 @@ local function buildMenu()
 	ss03.BackgroundColor3 = Color3.fromRGB(150, 72, 8)
 	ss03Stroke.Color = Color3.fromRGB(255, 165, 45)
 	local cutBtn, cutStroke = button("", 5, true, 44)
-	local locked = button("SS-04  ·  SEVEN STARS  (LOCKED)", 6, false)
-	locked.TextSize = 14
+	local ss04, ss04Stroke = button("SS-04  ·  THE SHOOTING STAR", 6, true)
+	ss04.TextSize = 17
+	ss04.BackgroundColor3 = Color3.fromRGB(78, 28, 140)
+	ss04Stroke.Color = Color3.fromRGB(190, 120, 255)
 	local close = Instance.new("TextButton")
 	close.Font = Enum.Font.Code; close.Text = "CLOSE"; close.TextSize = 16
 	close.TextColor3 = Color3.fromRGB(200, 204, 220); close.BackgroundTransparency = 1
@@ -2130,6 +2767,7 @@ local function buildMenu()
 
 	conns[#conns + 1] = ss01.Activated:Connect(function() task.spawn(runSS01) end)
 	conns[#conns + 1] = ss03.Activated:Connect(function() task.spawn(runSS03) end)
+	conns[#conns + 1] = ss04.Activated:Connect(function() task.spawn(runSS04) end)
 	conns[#conns + 1] = cutBtn.Activated:Connect(function()
 		env.__StellarCutsceneOn = not (env.__StellarCutsceneOn ~= false)
 		refreshCut()
@@ -2208,4 +2846,4 @@ env.__StellarRemoteCleanup = function()
 	pcall(function() RunService:UnbindFromRenderStep("StellarShake") end)
 end
 
-print("[Stellar Remote v3] ready - equip the remote (or tap SR), set CUTSCENE ON/OFF, press SS-01 or SS-03.")
+print("[Stellar Remote v4] ready - equip the remote (or tap SR), set CUTSCENE ON/OFF, press SS-01, SS-03 or SS-04.")
