@@ -1,12 +1,12 @@
 --[[
-	STELLAR REMOTE v2  ·  SS-01 RAILGUN
+	STELLAR REMOTE v3  ·  SS-01 RAILGUN + SS-03 GUNGNIR
 	LocalScript for Delta. 100% client-side: only YOU see anything.
 
 	  1. Execute. You get a "Stellar Remote" tool (+ a small "SR" button on screen).
 	  2. Tap the tool (equip, then tap again) or the SR button -> menu opens.
 	  3. CUTSCENE: ON  = ~10 s cinematic (Earth > Saturn > Solar System > Milky Way > railgun > impact)
 	     CUTSCENE: OFF = no camera movement, you watch the red beam charge live (~10 s) and then hit.
-	  4. Aim the centre of your screen at the ground and press SS-01 · RAILGUN.
+	  4. Aim the centre of your screen at the ground and press SS-01 · RAILGUN or SS-03 · GUNGNIR.
 ]]
 
 local Players      = game:GetService("Players")
@@ -30,6 +30,9 @@ local CONFIG = {
 	CARVE_LAND    = true,   -- beam + blast erase small parts / terrain in its path (YOUR screen only)
 	CARVE_RADIUS  = 55,     -- crater radius
 	PATH_RADIUS   = 34,     -- how wide the beam's destruction path is
+	HEX_RADIUS    = 900,    -- SS-03: how far the orange hexagons spread across the ground
+	HEX_CELL      = 26,     -- SS-03: hexagon size (bigger = fewer parts)
+	SPEAR_STAYS   = 90,     -- SS-03: seconds the collidable spear stays standing in the ground
 	SOUNDS        = true,
 	LASER_COLOR   = Color3.fromRGB(255, 25, 25),
 	BEAM_CORE     = Color3.fromRGB(255, 255, 255),
@@ -230,7 +233,8 @@ local function updateRig(rig, a, b, thFn)
 		if i <= n then
 			local mid = a + dir * (segLen * (i - 0.5))
 			local th = thFn(i, mid)
-			local base = CFrame.lookAt(mid, mid + dir) * CFrame.Angles(0, math.rad(90), 0) -- cylinder axis -> dir
+			local up = (math.abs(dir.Y) > 0.98) and Vector3.new(1, 0, 0) or Vector3.new(0, 1, 0)
+			local base = CFrame.lookAt(mid, mid + dir, up) * CFrame.Angles(0, math.rad(90), 0) -- cylinder axis -> dir
 			for li, p in ipairs(group) do
 				local t = math.max(th[li], 0.05)
 				p.Size = Vector3.new(math.min(segLen + 2, 2040), t, t)
@@ -501,8 +505,9 @@ end
 ------------------------------------------------------------------------
 -- DESTRUCTION: erase small parts / terrain in the beam's path (client-side)
 ------------------------------------------------------------------------
-local function makeEraser(T)
+local function makeEraser(T, pathR, craterR, udir)
 	local list = {}
+	local pr, cr, dv = pathR or CONFIG.PATH_RADIUS, craterR or CONFIG.CARVE_RADIUS, udir or DIR
 	if CONFIG.CARVE_LAND then
 		pcall(function()
 			local char = player.Character
@@ -525,9 +530,9 @@ local function makeEraser(T)
 				list[#list + 1] = { p, s }
 			end
 			for s = 0, 700, 26 do
-				for _, p in ipairs(workspace:GetPartBoundsInRadius(T + DIR * s, CONFIG.PATH_RADIUS, op)) do consider(p, s) end
+				for _, p in ipairs(workspace:GetPartBoundsInRadius(T + dv * s, pr, op)) do consider(p, s) end
 			end
-			for _, p in ipairs(workspace:GetPartBoundsInRadius(T, CONFIG.CARVE_RADIUS, op)) do consider(p, 0) end
+			for _, p in ipairs(workspace:GetPartBoundsInRadius(T, cr, op)) do consider(p, 0) end
 			table.sort(list, function(a, b) return a[2] > b[2] end)
 		end)
 	end
@@ -1108,6 +1113,928 @@ local function runSS01()
 end
 
 ------------------------------------------------------------------------
+-- SS-03 · GUNGNIR
+-- Orange beam points UP. Camera follows it to space: Earth > Jupiter (forms) > accelerator ring (forms),
+-- the spear loads, does 7 laps (faster each lap), RELEASE, rockets into Earth, falls through the sky as a
+-- star, slams into the ground: huge blast, collidable spear, hexagons across the ground.
+------------------------------------------------------------------------
+local UP        = Vector3.new(0, 1, 0)
+local NEONM, METALMAT = Enum.Material.Neon, Enum.Material.Metal
+local CYLS, BALLS = Enum.PartType.Cylinder, Enum.PartType.Ball
+
+local GS        = Vector3.new(0, 30000, 0)                -- Earth top in the Gungnir space scene
+local G_JUP     = GS + Vector3.new(0, 15000, 0)           -- Jupiter sits straight above Earth, on the beam
+local G_RING_R  = 2500
+local G_P0      = G_JUP + Vector3.new(G_RING_R, 0, 0)    -- spear start + release point (ring's right side)
+local G_CTRL    = G_P0 + Vector3.new(0, -8000, 0)
+local G_LAPS    = { 1.0, 0.8, 0.62, 0.5, 0.4, 0.32, 0.26 } -- seconds per lap: faster every lap
+local G_EARTH   = { c = GS + Vector3.new(0, -250, 0), dir = Vector3.new(0.78, 0.42, 0.46).Unit, d0 = 1500, d1 = 9000 }
+local function gEarthPos(a) return G_EARTH.c + G_EARTH.dir * (G_EARTH.d0 * (G_EARTH.d1 / G_EARTH.d0) ^ (a ^ 1.35)) end
+local G_PE1     = gEarthPos(1)
+local G_PJ1     = G_JUP + Vector3.new(1300, 450, 5500)
+local G_LOADCAM = G_P0 + Vector3.new(650, 140, 950)
+local G_WIDECAM = G_JUP + Vector3.new(0, 200, 9200)
+local SPEAR_STAGE_SCALE, SPEAR_REAL_SCALE = 2.2, 1.5
+
+local function gBez(u)
+	local a, b, c = (1 - u) ^ 2, 2 * (1 - u) * u, u * u
+	return G_P0 * a + G_CTRL * b + GS * c
+end
+local function gBezDir(u)
+	return ((G_CTRL - G_P0) * (2 * (1 - u)) + (GS - G_CTRL) * (2 * u)).Unit
+end
+local function poseCF(pos, dir)
+	local up = math.abs(dir.Y) > 0.98 and Vector3.new(1, 0, 0) or UP
+	return CFrame.lookAt(pos, pos + dir, up)
+end
+local function gLayers()
+	return {
+		{ color = Color3.fromRGB(255, 240, 150), alpha = 0 },
+		{ color = Color3.fromRGB(255, 160, 40),  alpha = 0.3 },
+		{ color = Color3.fromRGB(255, 100, 10),  alpha = 0.75 },
+	}
+end
+
+-- ---------------------------------------------------------------- the spear (rocket-spear)
+local function buildSpear(parent, sc, solidCollide)
+	local m = Instance.new("Model")
+	m.Name = "Gungnir"
+	local spear = { model = m, items = {}, glow = {}, flames = {} }
+	local ORANGE = Color3.fromRGB(255, 120, 20)
+	local GOLD = Color3.fromRGB(232, 182, 72)
+	local DARK = Color3.fromRGB(46, 38, 34)
+	local WHITE = Color3.fromRGB(255, 244, 214)
+
+	local function add(kind, z, cf, size, color, mat, shape, transp)
+		local p = Instance.new("Part")
+		p.Anchored = true
+		p.CanCollide = (kind == "solid") and solidCollide or false
+		p.CanQuery = (kind == "solid") and solidCollide or false
+		p.CanTouch = false
+		p.CastShadow = false
+		p.Massless = true
+		p.Material = mat
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		if shape then p.Shape = shape end
+		p.Size = size * sc
+		p.Color = color
+		p.Transparency = transp or 0
+		p.CFrame = cf
+		p.Parent = m
+		local e = { p = p, base = p.Transparency, kind = kind, z = z }
+		spear.items[#spear.items + 1] = e
+		if kind == "glow" then spear.glow[#spear.glow + 1] = e
+		elseif kind == "flame" then spear.flames[#spear.flames + 1] = e end
+		return e
+	end
+	local function cyl(kind, z, len, dia, color, mat, transp)
+		add(kind, z, CFrame.new(0, 0, z * sc) * CFrame.Angles(0, math.rad(90), 0), Vector3.new(len, dia, dia), color, mat, CYLS, transp)
+	end
+	local function blk(kind, z, sx, sy, sz, color, mat, transp)
+		add(kind, z, CFrame.new(0, 0, z * sc), Vector3.new(sx, sy, sz), color, mat, nil, transp)
+	end
+
+	-- shaft, collars, gold bands
+	cyl("solid", -15, 90, 5, DARK, METALMAT)
+	cyl("solid", -58, 3, 11, ORANGE, NEONM)
+	cyl("solid", -38, 2, 8, ORANGE, NEONM)
+	cyl("solid", -8, 2, 8, ORANGE, NEONM)
+	cyl("solid", 14, 2, 8, ORANGE, NEONM)
+	cyl("solid", -48, 6, 6.6, GOLD, METALMAT)
+	-- tapered spearhead + blades
+	cyl("solid", -66, 12, 9, GOLD, METALMAT)
+	cyl("solid", -78, 12, 7, GOLD, METALMAT)
+	cyl("solid", -88, 10, 5, GOLD, METALMAT)
+	cyl("solid", -96, 8, 3.2, GOLD, METALMAT)
+	cyl("solid", -102, 6, 1.6, WHITE, NEONM)
+	blk("solid", -82, 16, 1.2, 40, GOLD, METALMAT)
+	blk("solid", -82, 1.2, 16, 40, GOLD, METALMAT)
+	-- rocket tail: fins + nozzle + flame
+	blk("solid", 30, 1.2, 26, 22, DARK, METALMAT)
+	blk("solid", 30, 26, 1.2, 22, DARK, METALMAT)
+	cyl("solid", 40, 12, 9, DARK, METALMAT)
+	cyl("flame", 58, 34, 6.5, ORANGE, NEONM, 0.25)
+	cyl("flame", 52, 24, 3.2, WHITE, NEONM, 0.1)
+	-- star look: glow balls + spikes
+	add("glow", 0, CFrame.new(), Vector3.new(70, 70, 70), Color3.fromRGB(255, 140, 30), NEONM, BALLS, 0.35)
+	add("glow", 0, CFrame.new(), Vector3.new(32, 32, 32), WHITE, NEONM, BALLS, 0.05)
+	add("glow", 0, CFrame.new(), Vector3.new(170, 170, 170), Color3.fromRGB(255, 120, 20), NEONM, BALLS, 0.82)
+	add("glow", 0, CFrame.new(), Vector3.new(520, 5, 5), ORANGE, NEONM, nil, 0.1)
+	add("glow", 0, CFrame.new(), Vector3.new(5, 520, 5), ORANGE, NEONM, nil, 0.1)
+	add("glow", 0, CFrame.Angles(0, 0, math.rad(45)), Vector3.new(340, 4, 4), WHITE, NEONM, nil, 0.25)
+	add("glow", 0, CFrame.Angles(0, 0, math.rad(-45)), Vector3.new(340, 4, 4), WHITE, NEONM, nil, 0.25)
+
+	-- loading order: tail -> tip
+	local zmin, zmax = math.huge, -math.huge
+	for _, e in ipairs(spear.items) do
+		if e.kind == "solid" then zmin = math.min(zmin, e.z); zmax = math.max(zmax, e.z) end
+	end
+	for _, e in ipairs(spear.items) do e.order = (zmax - e.z) / (zmax - zmin) end
+
+	-- trail + exhaust at the tail
+	local anchor = Instance.new("Part")
+	anchor.Anchored = true; anchor.CanCollide = false; anchor.CanQuery = false; anchor.CanTouch = false
+	anchor.Transparency = 1; anchor.Size = Vector3.new(1, 1, 1)
+	anchor.CFrame = CFrame.new(0, 0, 62 * sc)
+	anchor.Parent = m
+	local a0 = Instance.new("Attachment"); a0.Position = Vector3.new(-14 * sc, 0, 0); a0.Parent = anchor
+	local a1 = Instance.new("Attachment"); a1.Position = Vector3.new(14 * sc, 0, 0); a1.Parent = anchor
+	local trail = Instance.new("Trail")
+	trail.Attachment0 = a0; trail.Attachment1 = a1
+	trail.Color = ColorSequence.new(Color3.fromRGB(255, 220, 130), Color3.fromRGB(255, 70, 10))
+	trail.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
+	trail.Lifetime = 0.7
+	trail.LightEmission = 1
+	trail.FaceCamera = true
+	trail.Enabled = false
+	trail.Parent = anchor
+	local exhaust = Instance.new("ParticleEmitter")
+	exhaust.Rate = 0
+	exhaust.Color = ColorSequence.new(Color3.fromRGB(255, 210, 120), Color3.fromRGB(255, 60, 10))
+	exhaust.LightEmission = 1
+	exhaust.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 16 * sc), NumberSequenceKeypoint.new(1, 0) })
+	exhaust.Lifetime = NumberRange.new(0.4, 0.7)
+	exhaust.Speed = NumberRange.new(0, 0)
+	exhaust.Parent = anchor
+
+	function spear.reveal(k)
+		for _, e in ipairs(spear.items) do
+			if e.kind == "solid" then e.p.Transparency = (k > 0 and k >= e.order) and e.base or 1 end
+		end
+	end
+	function spear.setGlow(k)
+		for _, e in ipairs(spear.glow) do e.p.Transparency = 1 - k * (1 - e.base) end
+	end
+	function spear.setFlame(k)
+		for _, e in ipairs(spear.flames) do e.p.Transparency = 1 - k * (1 - e.base) end
+		exhaust.Rate = 260 * k
+	end
+	function spear.setTrail(on) trail.Enabled = on end
+
+	m.WorldPivot = CFrame.new()
+	m.Parent = parent
+	spear.reveal(0); spear.setGlow(0); spear.setFlame(0)
+	return spear
+end
+
+-- ---------------------------------------------------------------- the space scene
+local function buildGungnirStage()
+	local Q = CONFIG.QUALITY
+	local folder = Instance.new("Folder")
+	folder.Name = "StellarGungnirStage"
+	folder.Parent = workspace
+
+	local made = 0
+	local function P(props, parent)
+		made += 1
+		if made % 140 == 0 then task.wait() end
+		return part(props, parent or folder)
+	end
+	local rng = Random.new(2024)
+
+	-- EARTH (same model as SS-01)
+	do
+		local c = GS + Vector3.new(0, -1000, 0)
+		P({ Shape = BALLS, Size = V(2000), Position = c, Color = Color3.fromRGB(10, 45, 115), Reflectance = 0.08 })
+		local function disc(dir, radius, d, thick, props)
+			props.Shape = CYLS
+			props.Size = Vector3.new(thick, d, d)
+			props.CFrame = flatCF(c + dir * radius, dir)
+			return P(props)
+		end
+		local lands = { Color3.fromRGB(46, 110, 52), Color3.fromRGB(70, 128, 58), Color3.fromRGB(104, 134, 70), Color3.fromRGB(160, 138, 84), Color3.fromRGB(190, 165, 100) }
+		for _ = 1, 8 do
+			local cen = randUnit(rng)
+			local spread = rng:NextNumber(0.12, 0.26)
+			for _ = 1, math.max(6, math.floor(16 * Q)) do
+				local d = (cen + randUnit(rng) * spread).Unit
+				disc(d, 999.2, rng:NextNumber(70, 190), 7, { Color = lands[rng:NextInteger(1, #lands)] })
+			end
+		end
+		disc(Vector3.new(0, 1, 0), 999.2, 340, 7, { Color = Color3.fromRGB(240, 245, 250) })
+		disc(Vector3.new(0, -1, 0), 999.2, 300, 7, { Color = Color3.fromRGB(240, 245, 250) })
+		for _ = 1, math.floor(70 * Q) do
+			disc(randUnit(rng), 1008, rng:NextNumber(60, 200), 3, { Color = Color3.new(1, 1, 1), Transparency = 0.3 })
+		end
+		P({ Shape = BALLS, Size = V(2044), Position = c, Color = Color3.fromRGB(90, 160, 255), Material = NEONM, Transparency = 0.9 })
+	end
+
+	-- JUPITER (a Model so it can "form" with ScaleTo)
+	local jup = Instance.new("Model")
+	jup.Name = "Jupiter"
+	jup.Parent = folder
+	local jupParts = {}
+	do
+		local c = G_JUP
+		local function JP(props)
+			local p = P(props, jup)
+			jupParts[#jupParts + 1] = { p = p, base = p.Transparency }
+			return p
+		end
+		JP({ Shape = BALLS, Size = V(1960), Position = c, Color = Color3.fromRGB(206, 160, 116) })
+		local bands = {
+			{ -640, 80, Color3.fromRGB(226, 196, 150) }, { -520, 90, Color3.fromRGB(150, 98, 66) },
+			{ -380, 110, Color3.fromRGB(232, 205, 160) }, { -230, 100, Color3.fromRGB(176, 108, 72) },
+			{ -90, 120, Color3.fromRGB(236, 212, 170) }, { 40, 110, Color3.fromRGB(158, 100, 68) },
+			{ 170, 100, Color3.fromRGB(230, 202, 156) }, { 300, 110, Color3.fromRGB(180, 112, 74) },
+			{ 450, 90, Color3.fromRGB(228, 198, 152) }, { 580, 80, Color3.fromRGB(150, 98, 66) },
+		}
+		local R = 980
+		for _, b in ipairs(bands) do
+			local h, th, col = b[1], b[2], b[3]
+			local dia = 2 * math.sqrt((R + 0.8) ^ 2 - (math.abs(h) + th / 2) ^ 2)
+			JP({ Shape = CYLS, Size = Vector3.new(th, dia, dia), CFrame = CFrame.new(c + Vector3.new(0, h, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = col })
+		end
+		local d = Vector3.new(0.28, -0.3, 0.91).Unit -- Great Red Spot, facing the camera side
+		JP({ Shape = CYLS, Size = Vector3.new(24, 300, 300), CFrame = flatCF(c + d * (R - 12), d), Color = Color3.fromRGB(176, 76, 48) })
+		JP({ Shape = CYLS, Size = Vector3.new(20, 190, 190), CFrame = flatCF(c + d * (R - 9), d), Color = Color3.fromRGB(205, 108, 72) })
+		JP({ Shape = BALLS, Size = V(2040), Position = c, Color = Color3.fromRGB(255, 160, 80), Material = NEONM, Transparency = 0.93 })
+	end
+	jup.WorldPivot = CFrame.new(G_JUP)
+	jup:ScaleTo(0.03)
+	for _, jp in ipairs(jupParts) do jp.p.Transparency = 1 end
+
+	-- ACCELERATOR RING (vertical ring, seen face-on from +Z)
+	local ring = { parts = {}, strips = {} }
+	do
+		local N = math.max(36, math.floor(72 * Q))
+		local arc = 2 * math.pi * G_RING_R / N
+		local METAL = Color3.fromRGB(52, 54, 66)
+		local DARK = Color3.fromRGB(30, 31, 40)
+		local ORG = Color3.fromRGB(255, 120, 20)
+		for i = 1, N do
+			local ang = (i - 0.5) / N * 2 * math.pi
+			local radial = Vector3.new(math.cos(ang), math.sin(ang), 0)
+			local tangent = Vector3.new(-math.sin(ang), math.cos(ang), 0)
+			local base = CFrame.fromMatrix(G_JUP + radial * G_RING_R, tangent, Vector3.new(0, 0, 1), radial)
+			local f = (i - 1) / N
+			local function RP(cf, size, color, mat, isStrip)
+				local p = P({ Size = size, Color = color, Material = mat, Transparency = 1, CFrame = base * cf })
+				ring.parts[#ring.parts + 1] = { p = p, cf = base * cf, f = f }
+				if isStrip then ring.strips[#ring.strips + 1] = p end
+			end
+			RP(CFrame.new(0, 0, 0), Vector3.new(arc * 1.04, 60, 150), METAL, METALMAT)
+			RP(CFrame.new(0, 34, 62), Vector3.new(arc * 1.04, 8, 14), ORG, NEONM, true)
+			RP(CFrame.new(0, 34, -62), Vector3.new(arc * 1.04, 8, 14), ORG, NEONM, true)
+			RP(CFrame.new(0, 0, 90), Vector3.new(arc * 1.04, 80, 22), DARK, METALMAT)
+			RP(CFrame.new(0, 0, -90), Vector3.new(arc * 1.04, 80, 22), DARK, METALMAT)
+			if i % 3 == 0 then
+				RP(CFrame.new(0, 0, 0), Vector3.new(arc * 0.5, 120, 210), METAL, METALMAT)
+				RP(CFrame.new(0, 64, 0), Vector3.new(arc * 0.52, 6, 190), Color3.fromRGB(255, 190, 90), NEONM, true)
+			end
+		end
+	end
+	-- forming animation: segments fly in around the ring one after another
+	local function formRing(tau)
+		for _, e in ipairs(ring.parts) do
+			local p = math.clamp((tau - e.f * 0.55) / 0.45, 0, 1)
+			local ease = 1 - (1 - p) ^ 3
+			e.p.Transparency = 1 - ease
+			if ease >= 1 then
+				e.p.CFrame = e.cf
+			else
+				e.p.CFrame = e.cf * CFrame.new(0, (1 - ease) * 700, (1 - ease) * 2400)
+			end
+		end
+	end
+	formRing(0)
+
+	local spear = buildSpear(folder, SPEAR_STAGE_SCALE, false)
+	spear.model:PivotTo(poseCF(G_P0, Vector3.new(0, -1, 0)))
+
+	return {
+		folder = folder, jup = jup, jupParts = jupParts, ring = ring, formRing = formRing, spear = spear,
+		beam = makeRig(folder, 10, gLayers()),
+	}
+end
+
+-- ---------------------------------------------------------------- hexagons across the ground
+local function hexWave(T)
+	if env.__StellarHex then pcall(function() env.__StellarHex:Destroy() end) end
+	local folder = Instance.new("Folder")
+	folder.Name = "StellarHex"
+	folder.Parent = workspace
+	env.__StellarHex = folder
+	task.spawn(function()
+		local Rh = CONFIG.HEX_CELL / math.sqrt(math.max(CONFIG.QUALITY, 0.25))
+		local rad = CONFIG.HEX_RADIUS
+		local d = math.sqrt(3) * Rh
+		local a1 = Vector3.new(d, 0, 0)
+		local a2 = Vector3.new(d * 0.5, 0, d * math.sqrt(3) / 2)
+		local dirs = { Vector3.new(1, 0, 0), Vector3.new(0.5, 0, math.sqrt(3) / 2), Vector3.new(-0.5, 0, math.sqrt(3) / 2) }
+		local edges = {}
+		local qm = math.ceil(rad / d) + 2
+		for q = -qm, qm do
+			for r = -qm, qm do
+				local c = a1 * q + a2 * r
+				if c.Magnitude <= rad + d then
+					for k = 1, 3 do -- 3 edges per cell = every honeycomb edge exactly once
+						local mid = c + dirs[k] * (d / 2)
+						if mid.Magnitude <= rad then
+							edges[#edges + 1] = { mid, Vector3.new(-dirs[k].Z, 0, dirs[k].X), mid.Magnitude }
+						end
+					end
+				end
+			end
+		end
+		table.sort(edges, function(x, y) return x[3] < y[3] end)
+
+		local ex = {}
+		for _, pl in ipairs(Players:GetPlayers()) do
+			if pl.Character then ex[#ex + 1] = pl.Character end
+		end
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		rp.FilterDescendantsInstances = ex
+
+		local bars, idx, last = {}, 1, os.clock()
+		local rate = #edges / 1.4 -- the wave sweeps out in ~1.4 s
+		while idx <= #edges and folder.Parent do
+			RunService.Heartbeat:Wait()
+			local now = os.clock()
+			local n = math.max(1, math.floor(rate * (now - last)))
+			last = now
+			for _ = 1, n do
+				local e = edges[idx]
+				if not e then break end
+				idx += 1
+				local hit = workspace:Raycast(Vector3.new(T.X + e[1].X, T.Y + 250, T.Z + e[1].Z), Vector3.new(0, -600, 0), rp)
+				if hit then
+					local f = e[3] / rad
+					local pos = hit.Position + Vector3.new(0, 0.45, 0)
+					bars[#bars + 1] = part({
+						Size = Vector3.new(2.4, 0.6, Rh * 1.02),
+						CFrame = CFrame.lookAt(pos, pos + e[2]),
+						Color = Color3.fromRGB(255, 240, 180):Lerp(Color3.fromRGB(255, 105, 15), math.clamp(f * 1.7, 0, 1)),
+						Material = Enum.Material.Neon,
+					}, folder)
+				end
+			end
+		end
+		local t0 = os.clock()
+		while folder.Parent and os.clock() - t0 < 36 do -- pulse
+			local k = 0.5 + 0.5 * math.sin((os.clock() - t0) * 4)
+			for _, b in ipairs(bars) do b.Transparency = 0.05 + 0.3 * k end
+			task.wait(0.1)
+		end
+		local t1 = os.clock() -- fade out
+		while folder.Parent and os.clock() - t1 < 3 do
+			local a = (os.clock() - t1) / 3
+			for _, b in ipairs(bars) do b.Transparency = 0.2 + 0.8 * a end
+			task.wait(0.1)
+		end
+		if folder.Parent then folder:Destroy() end
+	end)
+end
+
+-- ---------------------------------------------------------------- the big boom
+local function impactG(S, T, N, beamRig, eraser)
+	local hud = S.hud
+	local R = 150
+	local fold = Instance.new("Folder")
+	fold.Name = "StellarImpact"
+	fold.Parent = workspace
+	task.delay(60, function() fold:Destroy() end)
+
+	sfx(SND.boom, 3, 0.55, 12)
+	sfx(SND.shot, 2.5, 0.3, 12)
+	sfx(SND.boom, 2, 0.9, 10)
+	TweenService:Create(hud.flash, TweenInfo.new(1.4), { BackgroundTransparency = 1 }):Play()
+
+	eraser(-1)
+	if CONFIG.CARVE_LAND then
+		pcall(function() workspace.Terrain:FillBall(T, R * 0.8, Enum.Material.Air) end)
+		pcall(function() workspace.Terrain:FillCylinder(CFrame.new(T + UP * 350), 700, 45, Enum.Material.Air) end)
+	end
+
+	-- crater
+	part({ Shape = CYLS, Size = Vector3.new(0.1, R * 2.2, R * 2.2), CFrame = flatCF(T + N * 0.15, N), Color = Color3.fromRGB(255, 110, 20), Material = NEONM, Transparency = 0.35 }, fold)
+	part({ Shape = CYLS, Size = Vector3.new(0.1, R * 2.0, R * 2.0), CFrame = flatCF(T + N * 0.3, N), Color = Color3.fromRGB(14, 12, 12) }, fold)
+	part({ Shape = CYLS, Size = Vector3.new(0.1, R * 0.9, R * 0.9), CFrame = flatCF(T + N * 0.45, N), Color = Color3.fromRGB(255, 80, 10), Material = NEONM, Transparency = 0.15 }, fold)
+
+	-- fireball, dome, pillar of fire
+	local fb = part({ Shape = BALLS, Size = V(6), Position = T + Vector3.new(0, 6, 0), Color = Color3.fromRGB(255, 190, 90), Material = NEONM }, fold)
+	local fb2 = part({ Shape = BALLS, Size = V(4), Position = T + Vector3.new(0, 6, 0), Color = Color3.new(1, 1, 1), Material = NEONM }, fold)
+	TweenService:Create(fb, TweenInfo.new(1.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = V(R * 3.4), Position = T + Vector3.new(0, R * 0.9, 0), Transparency = 1 }):Play()
+	TweenService:Create(fb2, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = V(R * 2), Position = T + Vector3.new(0, R * 0.6, 0), Transparency = 1 }):Play()
+	local dome = part({ Shape = BALLS, Size = V(30), Position = T, Color = Color3.fromRGB(255, 140, 30), Material = NEONM, Transparency = 0.55 }, fold)
+	TweenService:Create(dome, TweenInfo.new(1.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = V(1400), Transparency = 1 }):Play()
+	local pillar = part({ Shape = CYLS, Size = Vector3.new(900, 40, 40), CFrame = CFrame.new(T + UP * 450) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(255, 150, 40), Material = NEONM }, fold)
+	TweenService:Create(pillar, TweenInfo.new(1.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(900, 260, 260), Transparency = 1 }):Play()
+
+	-- shockwave rings
+	local function ringWave(delay, maxR, dur, col)
+		task.spawn(function()
+			task.wait(delay)
+			local SEGS = 90
+			local ring = {}
+			for i = 1, SEGS do ring[i] = part({ Size = Vector3.new(8, 4, 8), Color = col, Material = NEONM }, fold) end
+			runFor(dur, function(a)
+				local rad = 8 + (a ^ 0.55) * maxR
+				local width = 16 * (1 - a) + 3
+				local arc = 2 * math.pi * rad / SEGS * 1.1
+				for i, p in ipairs(ring) do
+					local ang = (i / SEGS) * math.pi * 2
+					p.Size = Vector3.new(width, 5 * (1 - a) + 0.6, arc)
+					p.CFrame = CFrame.new(T + Vector3.new(0, 2, 0)) * CFrame.new(math.cos(ang) * rad, 0, math.sin(ang) * rad) * CFrame.Angles(0, -ang, 0)
+					p.Transparency = 0.1 + 0.9 * a
+				end
+			end)
+			for _, p in ipairs(ring) do p:Destroy() end
+		end)
+	end
+	ringWave(0, 1700, 2.0, Color3.fromRGB(255, 235, 190))
+	ringWave(0.25, 1300, 2.0, Color3.fromRGB(255, 140, 30))
+
+	-- embers + smoke
+	local emP = part({ Size = Vector3.new(R, 1, R), Position = T + Vector3.new(0, 1, 0), Transparency = 1 }, fold)
+	local em = Instance.new("ParticleEmitter")
+	em.Rate = 0
+	em.Color = ColorSequence.new(Color3.fromRGB(255, 220, 140), Color3.fromRGB(255, 80, 20))
+	em.LightEmission = 1
+	em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 3.2), NumberSequenceKeypoint.new(1, 0) })
+	em.Lifetime = NumberRange.new(1.4, 3.2)
+	em.Speed = NumberRange.new(90, 280)
+	em.SpreadAngle = Vector2.new(70, 70)
+	em.Acceleration = Vector3.new(0, -80, 0)
+	em.EmissionDirection = Enum.NormalId.Top
+	em.Parent = emP
+	em:Emit(520)
+	local smoke = Instance.new("ParticleEmitter")
+	smoke.Rate = 0
+	smoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	smoke.Color = ColorSequence.new(Color3.fromRGB(70, 50, 40))
+	smoke.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 40), NumberSequenceKeypoint.new(1, 170) })
+	smoke.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1) })
+	smoke.Lifetime = NumberRange.new(3.5, 6)
+	smoke.Speed = NumberRange.new(20, 80)
+	smoke.SpreadAngle = Vector2.new(60, 60)
+	smoke.EmissionDirection = Enum.NormalId.Top
+	smoke.Parent = emP
+	smoke:Emit(150)
+	em.Rate = 30
+	task.delay(8, function() em.Rate = 0 end)
+
+	-- orange tint over the whole screen, fading out
+	local tint = Instance.new("ColorCorrectionEffect")
+	tint.TintColor = Color3.fromRGB(255, 170, 110)
+	tint.Brightness = 0.12
+	tint.Contrast = 0.15
+	tint.Parent = Lighting
+	TweenService:Create(tint, TweenInfo.new(5, Enum.EasingStyle.Quad), { TintColor = Color3.new(1, 1, 1), Brightness = 0, Contrast = 0 }):Play()
+	Debris:AddItem(tint, 6)
+
+	hexWave(T)
+
+	-- the beam flares and fades
+	task.spawn(function()
+		runFor(2.0, function(a)
+			local k = (1 - a) ^ 0.6
+			updateRig(beamRig, T, T + UP * 2600, function() return { 20 * k, 48 * k, 90 * k } end)
+		end)
+		updateRig(beamRig, T, T, function() return { 1, 1, 1 } end)
+	end)
+end
+
+-- ---------------------------------------------------------------- session helper (camera/lighting/cleanup)
+local function newSession(useCut, hum)
+	local S = {}
+	S.cam = getCam()
+	S.saved = {
+		type = S.cam.CameraType, subject = S.cam.CameraSubject, fov = S.cam.FieldOfView,
+		ws = hum.WalkSpeed, jp = hum.JumpPower, jh = hum.JumpHeight,
+	}
+	S.hud = newHUD()
+	S.hidden, S.live = {}, {}
+	S.lightingActive = false
+	S.playerRestored = not useCut
+	S.realFolder = Instance.new("Folder")
+	S.realFolder.Name = "StellarReal"
+	S.realFolder.Parent = workspace
+	if useCut then
+		S.fx = { blur = Instance.new("BlurEffect"), cc = Instance.new("ColorCorrectionEffect"), bloom = Instance.new("BloomEffect") }
+		S.fx.blur.Size = 0
+		S.fx.bloom.Intensity = 0.8; S.fx.bloom.Size = 36; S.fx.bloom.Threshold = 0.9
+		for _, e in pairs(S.fx) do e.Parent = Lighting end
+	end
+
+	function S.resetFx()
+		if not S.fx then return end
+		S.fx.blur.Size = 0
+		S.fx.cc.Brightness = 0; S.fx.cc.Contrast = 0; S.fx.cc.Saturation = 0
+		S.fx.cc.TintColor = Color3.new(1, 1, 1)
+	end
+	function S.enterSpace()
+		spaceLighting()
+		S.lightingActive = true
+	end
+	function S.hideWorld()
+		local n = 0
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if d:IsA("BasePart") and d ~= workspace.Terrain then
+				if not (S.stage and d:IsDescendantOf(S.stage.folder)) then
+					local v = d.LocalTransparencyModifier
+					if v < 1 then
+						S.hidden[#S.hidden + 1] = { d, v }
+						d.LocalTransparencyModifier = 1
+					end
+				end
+			end
+			n += 1
+			if n % 3000 == 0 then task.wait() end
+		end
+	end
+	function S.leaveSpace()
+		if not S.lightingActive then return end
+		S.lightingActive = false
+		restoreLighting()
+		for _, rec in ipairs(S.hidden) do
+			if rec[1].Parent then rec[1].LocalTransparencyModifier = rec[2] end
+		end
+		S.hidden = {}
+	end
+	function S.restorePlayer()
+		if S.playerRestored then return end
+		S.playerRestored = true
+		local c = getCam()
+		c.CameraType = (S.saved.type ~= Enum.CameraType.Scriptable) and S.saved.type or Enum.CameraType.Custom
+		if S.saved.subject then c.CameraSubject = S.saved.subject end
+		c.FieldOfView = S.saved.fov
+		if hum and hum.Parent then
+			hum.WalkSpeed = S.saved.ws; hum.JumpPower = S.saved.jp; hum.JumpHeight = S.saved.jh
+		end
+		setControls(true)
+	end
+	function S.restoreAll()
+		for _, cn in ipairs(S.live) do pcall(function() cn:Disconnect() end) end
+		S.leaveSpace()
+		S.restorePlayer()
+		if S.fx then for _, e in pairs(S.fx) do pcall(function() e:Destroy() end) end end
+		if S.stage and S.stage.folder then pcall(function() S.stage.folder:Destroy() end) end
+		pcall(function() S.realFolder:Destroy() end)
+		pcall(function() S.hud.gui:Destroy() end)
+	end
+	return S
+end
+
+-- ---------------------------------------------------------------- THE SS-03 SEQUENCE
+local function runSS03()
+	if busy then return end
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hum and root) then return end
+	busy = true
+	if menu then menu.close() end
+	local useCut = env.__StellarCutsceneOn ~= false
+	local S = newSession(useCut, hum)
+	local hud, cam, fx = S.hud, S.cam, S.fx
+
+	local ok, err = pcall(function()
+		sfx(SND.click, 1.2, 1, 3)
+		if env.__StellarSpear then pcall(function() env.__StellarSpear:Destroy() end) end
+		local spearFolder = Instance.new("Folder")
+		spearFolder.Name = "StellarSpear"
+		spearFolder.Parent = workspace
+		env.__StellarSpear = spearFolder
+		task.delay(CONFIG.SPEAR_STAYS, function() if spearFolder.Parent then spearFolder:Destroy() end end)
+
+		-- ---------- aim: the centre of your screen (same as the railgun) ----------
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { char }
+		local vs = cam.ViewportSize
+		local ray = cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+		local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
+		local T, N
+		if res then
+			T, N = res.Position, res.Normal
+		else
+			local p = ray.Origin + ray.Direction * 150
+			local down = workspace:Raycast(p + Vector3.new(0, 200, 0), Vector3.new(0, -800, 0), params)
+			if down then T, N = down.Position, down.Normal else T, N = p, Vector3.new(0, 1, 0) end
+		end
+		if N.Y < 0.3 then N = Vector3.new(0, 1, 0) end
+
+		local toPlayer = Vector3.new(root.Position.X - T.X, 0, root.Position.Z - T.Z)
+		if toPlayer.Magnitude < 5 then toPlayer = Vector3.new(0, 0, 1) end
+		local farPos = T + toPlayer.Unit * 260 + Vector3.new(0, 18, 0)
+
+		-- ---------- orange pulsing circle on the ground + orange beam pointing UP ----------
+		local core = part({ Shape = CYLS, Size = Vector3.new(0.2, 16, 16), CFrame = flatCF(T + N * 0.1, N), Color = Color3.fromRGB(255, 130, 20), Material = NEONM, Transparency = 0.15 }, S.realFolder)
+		local pulses = {}
+		for i = 1, 3 do
+			pulses[i] = part({ Shape = CYLS, Size = Vector3.new(0.15, 4, 4), CFrame = flatCF(T + N * (0.14 + i * 0.03), N), Color = Color3.fromRGB(255, 190, 90), Material = NEONM, Transparency = 1 }, S.realFolder)
+		end
+		local pulseSpeed, phase = 0.9, 0
+		S.live[#S.live + 1] = RunService.RenderStepped:Connect(function(dt)
+			phase += dt * pulseSpeed
+			core.Size = Vector3.new(0.2, 16 * (1 + 0.1 * math.sin(os.clock() * 9)), 16 * (1 + 0.1 * math.sin(os.clock() * 9)))
+			for i, p in ipairs(pulses) do
+				local ph = (phase + i / 3) % 1
+				local d = 8 + 46 * ph
+				p.Size = Vector3.new(0.15, d, d)
+				p.Transparency = 0.25 + 0.75 * ph
+			end
+		end)
+		local beamUp = makeRig(S.realFolder, 3, gLayers())
+		local eraser = makeEraser(T, 60, 150, UP)
+		local RS = SPEAR_REAL_SCALE
+		local FINAL_C = 102 * RS - 12 * RS -- spear centre height when its tip is buried in the ground
+
+		-- the spear falls down the beam as a star and becomes a collidable spear
+		local function descend(spear, dur, camFn)
+			runFor(dur, function(a, dt, e)
+				local s = FINAL_C + (2600 - FINAL_C) * (1 - a * a)
+				spear.model:PivotTo(poseCF(T + UP * s, -UP))
+				updateRig(beamUp, T, T + UP * 2600, function() return { 2.2 + 3 * a, 6 + 8 * a, 12 + 18 * a } end)
+				eraser(s - 102 * RS)
+				if camFn then camFn(s, a, e) end
+			end)
+			spear.model:PivotTo(poseCF(T + UP * FINAL_C, -UP))
+		end
+		local function landed(spear)
+			spear.setGlow(0); spear.setFlame(0); spear.setTrail(false)
+		end
+
+		if useCut then
+			----------------------------------------------------------------
+			-- CUTSCENE ON  (~15 s)
+			----------------------------------------------------------------
+			setControls(false)
+			hum.WalkSpeed = 0; hum.JumpPower = 0; hum.JumpHeight = 0
+			cam.CameraType = Enum.CameraType.Scriptable
+			saveLighting()
+			local stageReady = false
+			task.spawn(function()
+				local okb, res2 = pcall(buildGungnirStage)
+				if okb then S.stage = res2 else warn("[StellarRemote] stage build failed: " .. tostring(res2)) end
+				stageReady = true
+			end)
+			hud.bars(true)
+			hud.setLabel("SS-03  ·  GUNGNIR")
+			hud.setSub("TARGET LOCKED")
+			task.spawn(function()
+				runFor(0.4, function(a)
+					updateRig(beamUp, T, T + UP * 2600, function() return { 2.2 * a, 6 * a, 12 * a } end)
+				end)
+			end)
+
+			-- camera goes to the laser (0.6 s)
+			local startCF = cam.CFrame
+			local lockPos = T + toPlayer.Unit * math.clamp(toPlayer.Magnitude, 26, 60) + Vector3.new(0, 10, 0)
+			local lockLook = T + Vector3.new(0, 30, 0)
+			local lockCF = CFrame.lookAt(lockPos, lockLook)
+			runFor(TS(0.6), function(a) cam.CFrame = startCF:Lerp(lockCF, smooth(a)) end)
+
+			-- ...then rises up the beam into the sky (0.8 s)
+			sfx(SND.launch, 1.5, 1.0, 6)
+			runFor(TS(0.8), function(a)
+				local s = 6 + 2500 * (a ^ 2.2)
+				local blend = smooth(a / 0.3)
+				local ang = a * 2.0 + 0.8
+				local off = Vector3.new(math.cos(ang), 0, math.sin(ang)) * 12
+				local pos = lockPos:Lerp(T + UP * s + off, blend)
+				local look = lockLook:Lerp(T + UP * (s + 500), blend)
+				cam.CFrame = CFrame.lookAt(pos, look)
+				cam.FieldOfView = 70 + 35 * (a ^ 1.5)
+				fx.blur.Size = 16 * a * a
+				local dd = smooth((a - 0.45) / 0.55)
+				fx.cc.Brightness = -0.2 * dd
+				fx.cc.TintColor = Color3.new(1, 1, 1):Lerp(Color3.fromRGB(255, 205, 150), dd)
+				if a > 0.72 then hud.flash.BackgroundTransparency = 1 - smooth((a - 0.72) / 0.28) end
+			end)
+			hud.flash.BackgroundTransparency = 0
+
+			while not stageReady do RunService.RenderStepped:Wait() end
+			if not S.stage then error("stage not built") end
+			S.resetFx()
+			S.enterSpace()
+			S.hideWorld()
+			local gst = S.stage
+			local spear = gst.spear
+			local function beamLOD()
+				local cp = cam.CFrame.Position
+				updateRig(gst.beam, GS, G_JUP, function(_, mid)
+					local d = (mid - cp).Magnitude
+					local t = math.clamp(d * 0.004 + 1.5, 1.5, 120)
+					return { t, t * 2.4, t * 4.5 }
+				end)
+			end
+			sfx(SND.whoosh, 1.2, 0.6, 10)
+
+			-- ---------- lock on Earth, zoom out ----------
+			hud.setLabel("EARTH")
+			runFor(TS(1.1), function(a, dt, e)
+				cam.CFrame = CFrame.lookAt(gEarthPos(a), G_EARTH.c) * CFrame.Angles(0, 0, math.sin(a * 5) * 0.025)
+				cam.FieldOfView = 70 + 14 * smooth(a)
+				fx.blur.Size = 6 * smooth(a)
+				hud.flash.BackgroundTransparency = smooth(e / 0.5)
+				beamLOD()
+				hud.setSub("DISTANCE FROM TARGET   " .. fmt((gEarthPos(a) - GS).Magnitude * 4200) .. " KM")
+			end)
+
+			-- ---------- lock on Jupiter while flying to it; Jupiter + the ring FORM ----------
+			hud.setLabel("JUPITER")
+			local tJ = TS(1.5)
+			runFor(tJ, function(a, dt, e)
+				local k = smooth(a)
+				local look = G_EARTH.c:Lerp(G_JUP, smooth(a / 0.35))
+				cam.CFrame = CFrame.lookAt(G_PE1:Lerp(G_PJ1, k), look) * CFrame.Angles(0, 0, math.sin(a * 4) * 0.02)
+				cam.FieldOfView = 84 - 20 * k
+				fx.blur.Size = 6 * (1 - k)
+				local jf = math.clamp(e / (tJ * 0.65), 0, 1)
+				local ease = 1 - (1 - jf) ^ 2
+				gst.jup:ScaleTo(0.03 + 0.97 * ease)
+				for _, jp in ipairs(gst.jupParts) do jp.p.Transparency = 1 - ease * (1 - jp.base) end
+				gst.formRing(math.clamp((e - tJ * 0.08) / (tJ * 0.85), 0, 1))
+				beamLOD()
+				hud.setSub("ACCELERATOR RING  FORMING")
+				if a > 0.9 then hud.flash.BackgroundTransparency = 1 - smooth((a - 0.9) / 0.1) end
+			end)
+			gst.jup:ScaleTo(1)
+			gst.formRing(1)
+			hud.flash.BackgroundTransparency = 0
+
+			-- ---------- teleport to the accelerator: the spear loads in ----------
+			hud.setLabel("SS-03  ·  ACCELERATOR")
+			S.resetFx()
+			sfx(SND.launch, 1.4, 0.7, 8)
+			local ORG, HOT = Color3.fromRGB(255, 120, 20), Color3.fromRGB(255, 250, 230)
+			runFor(TS(1.1), function(a, dt, e)
+				if e < 0.3 then hud.flash.BackgroundTransparency = smooth(e / 0.3) end
+				local pos = G_LOADCAM:Lerp(G_P0 + Vector3.new(380, 90, 560), smooth(a))
+				cam.CFrame = CFrame.lookAt(pos, G_P0)
+				cam.FieldOfView = 66
+				local load = math.clamp(a / 0.85, 0, 1)
+				spear.reveal(load)
+				spear.setGlow(smooth((a - 0.55) / 0.45) * 0.6)
+				hud.setSub(("SPEAR LOADING   %d%%"):format(math.floor(load * 100)))
+				for _, s2 in ipairs(gst.ring.strips) do s2.Color = ORG:Lerp(HOT, 0.25 * math.sin(e * 14) ^ 2) end
+			end)
+			spear.reveal(1)
+			hud.setSub("")
+
+			-- ---------- 7 laps around Jupiter, faster every lap ----------
+			spear.setGlow(1)
+			spear.setTrail(true)
+			local lapDur, lapStart, total = {}, {}, 0
+			for i, d0 in ipairs(G_LAPS) do
+				lapDur[i] = TS(d0); lapStart[i] = total; total = total + lapDur[i]
+			end
+			local curLap = 0
+			runFor(total, function(a, dt, e)
+				local lap = #G_LAPS
+				for i = 1, #G_LAPS do
+					if e < lapStart[i] + lapDur[i] then lap = i break end
+				end
+				local u = math.clamp((e - lapStart[lap]) / lapDur[lap], 0, 1)
+				local th = (lap - 1 + u) * 2 * math.pi
+				local radial = Vector3.new(math.cos(th), -math.sin(th), 0)
+				local tang = Vector3.new(-math.sin(th), -math.cos(th), 0) -- clockwise
+				local pos = G_JUP + radial * G_RING_R
+				spear.model:PivotTo(poseCF(pos, tang))
+				if lap ~= curLap then
+					curLap = lap
+					hud.setLabel(("LAP  %d / %d"):format(lap, #G_LAPS))
+					sfx(SND.whoosh, 1.2, 0.8 + 0.12 * lap, 3)
+				end
+				local sp = (lap - 1 + u) / #G_LAPS
+				for _, s2 in ipairs(gst.ring.strips) do s2.Color = ORG:Lerp(HOT, sp) end
+				-- wide view of Jupiter (laps 1-4), then the camera rides with the spear (laps 5-7)
+				local wide = G_WIDECAM + Vector3.new(0, 0, 500 * a)
+				local chasePos = pos + radial * 380 + Vector3.new(0, 0, 520) - tang * 700
+				local chaseLook = pos + tang * 300 - radial * 120
+				local ck = (lap >= 5) and smooth((e - lapStart[5]) / TS(0.15)) or 0
+				cam.CFrame = CFrame.lookAt(wide:Lerp(chasePos, ck), G_JUP:Lerp(chaseLook, ck)) * shakeRot(0.001 + 0.006 * sp)
+				cam.FieldOfView = 70 + 20 * sp
+				fx.blur.Size = 14 * ck
+			end)
+
+			-- ---------- RELEASE ----------
+			hud.title.TextSize = 56
+			hud.title.TextColor3 = Color3.fromRGB(255, 170, 60)
+			hud.setLabel("RELEASE")
+			hud.setSub("")
+			sfx(SND.shot, 3, 0.6, 8)
+			sfx(SND.boom, 1.5, 0.8, 6)
+			local holdCF = cam.CFrame
+			runFor(TS(0.28), function(a)
+				cam.CFrame = holdCF * shakeRot(0.004 + 0.01 * a)
+				cam.FieldOfView = 90 - 12 * a
+			end)
+
+			-- the rocket-spear launches into the Earth model, camera at its side
+			spear.setFlame(1)
+			spear.setGlow(0.5)
+			local fromCF = cam.CFrame
+			local frozen
+			local earthFlashDone = false
+			runFor(TS(1.3), function(a, dt, e)
+				local u = a ^ 2.3
+				local pos = gBez(u)
+				local dir = gBezDir(u)
+				spear.model:PivotTo(poseCF(pos, dir))
+				local sidePos = pos + Vector3.new(0, 40, 330) - dir * 160
+				local look = pos + dir * 260
+				if u > 0.93 then
+					frozen = frozen or sidePos
+					sidePos = frozen
+					look = GS
+				end
+				local k = smooth(e / 0.35)
+				local camPos = fromCF.Position:Lerp(sidePos, k)
+				local camLook = (fromCF * CFrame.new(0, 0, -400)).Position:Lerp(look, k)
+				cam.CFrame = CFrame.lookAt(camPos, camLook) * shakeRot(0.004)
+				cam.FieldOfView = 70 + 35 * smooth(a)
+				fx.blur.Size = 6 + 16 * a
+				beamLOD()
+				if a > 0.93 and not earthFlashDone then
+					earthFlashDone = true
+					local ef = part({ Shape = BALLS, Size = V(40), Position = GS, Color = Color3.new(1, 1, 1), Material = NEONM }, gst.folder)
+					TweenService:Create(ef, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = V(1100), Transparency = 1 }):Play()
+				end
+				if a > 0.82 then hud.flash.BackgroundTransparency = 1 - smooth((a - 0.82) / 0.18) end
+			end)
+			hud.flash.BackgroundTransparency = 0
+			hud.title.TextSize = 26
+			hud.title.TextColor3 = Color3.new(1, 1, 1)
+
+			-- ---------- back in the game: a star comes down the sky ----------
+			gst.folder:Destroy()
+			S.leaveSpace()
+			S.resetFx()
+			hud.setLabel("")
+			hud.setSub("")
+			local rs = buildSpear(spearFolder, RS, true)
+			rs.reveal(1); rs.setGlow(1); rs.setFlame(1); rs.setTrail(true)
+			rs.model:PivotTo(poseCF(T + UP * 2600, -UP))
+			sfx(SND.whoosh, 2, 0.8, 6)
+			descend(rs, TS(1.2), function(s, a, e)
+				local look = T + UP * math.max(s * 0.55, 80)
+				cam.CFrame = CFrame.lookAt(farPos, look) * shakeRot(0.004 * a)
+				cam.FieldOfView = 68 + 14 * a
+				fx.blur.Size = 6 * a
+				if e < 0.25 then hud.flash.BackgroundTransparency = smooth(e / 0.25) end
+				if a > 0.9 then hud.flash.BackgroundTransparency = 1 - smooth((a - 0.9) / 0.1) end
+			end)
+			hud.flash.BackgroundTransparency = 0
+			landed(rs)
+			hud.bars(false)
+			impactG(S, T, N, beamUp, eraser)
+			-- hold the camera on the blast with a heavy shake, then give control back
+			local baseCF = CFrame.lookAt(farPos, T + UP * 120)
+			runFor(1.6, function(a)
+				local k = (1 - a) ^ 2
+				cam.CFrame = baseCF * shakeRot(0.03 * k)
+				cam.FieldOfView = 70 + 18 * k
+				fx.blur.Size = 12 * k
+			end)
+			S.resetFx()
+			S.restorePlayer()
+			task.wait(2.3)
+		else
+			----------------------------------------------------------------
+			-- CUTSCENE OFF: orange beam live, no camera movement (~10 s)
+			----------------------------------------------------------------
+			hud.setLabel("SS-03  ·  GUNGNIR")
+			local spear = buildSpear(spearFolder, RS, true)
+			spear.model:PivotTo(poseCF(T + UP * 2600, -UP))
+			local CH = CONFIG.LIVE_CHARGE
+			sfx(SND.launch, 1.3, 0.45, 9)
+			runFor(CH, function(a, dt, e)
+				pulseSpeed = 0.9 + 2.6 * a
+				local pulse = 1 + (0.2 + 0.5 * a) * math.sin(e * (8 + 24 * a))
+				updateRig(beamUp, T, T + UP * 2600, function() return { (2.2 + 2.5 * a) * pulse, (6 + 8 * a) * pulse, (12 + 20 * a) * pulse } end)
+				local load = math.clamp(a / 0.85, 0, 1)
+				spear.reveal(load)
+				spear.setGlow(0.2 + 0.8 * a * a)
+				hud.setSub(("SPEAR LOADING  %d%%   ·   RELEASE IN %.1f"):format(math.floor(load * 100), math.max(CH - e, 0)))
+			end)
+			spear.reveal(1)
+			hud.title.TextSize = 56
+			hud.title.TextColor3 = Color3.fromRGB(255, 170, 60)
+			hud.setLabel("RELEASE")
+			hud.setSub("")
+			sfx(SND.shot, 3, 0.6, 8)
+			spear.setGlow(1); spear.setFlame(1); spear.setTrail(true)
+			descend(spear, 1.0, nil)
+			hud.title.TextSize = 26
+			hud.title.TextColor3 = Color3.new(1, 1, 1)
+			landed(spear)
+			hud.flash.BackgroundTransparency = 0.15
+			impactG(S, T, N, beamUp, eraser)
+			task.wait(2.6)
+		end
+	end)
+
+	if not ok then warn("[StellarRemote] " .. tostring(err)) end
+	S.restoreAll()
+	busy = false
+end
+
+------------------------------------------------------------------------
 -- MENU (opens when you click/tap the remote)
 ------------------------------------------------------------------------
 local function buildMenu()
@@ -1122,7 +2049,7 @@ local function buildMenu()
 	local frame = Instance.new("Frame")
 	frame.AnchorPoint = Vector2.new(0.5, 0.5)
 	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
-	frame.Size = UDim2.fromOffset(300, 312)
+	frame.Size = UDim2.fromOffset(300, 374)
 	frame.BackgroundColor3 = Color3.fromRGB(12, 14, 22)
 	frame.BackgroundTransparency = 0.04
 	frame.BorderSizePixel = 0
@@ -1166,13 +2093,16 @@ local function buildMenu()
 	label("STELLAR REMOTE", 24, Color3.new(1, 1, 1), 1, 30)
 	label("THE SHOOTING STAR", 13, Color3.fromRGB(255, 110, 110), 2, 16)
 	local ss01 = button("SS-01  ·  RAILGUN", 3, true)
-	local cutBtn, cutStroke = button("", 4, true, 44)
-	local locked = button("SS-04  ·  SEVEN STARS  (LOCKED)", 5, false)
+	local ss03, ss03Stroke = button("SS-03  ·  GUNGNIR", 4, true)
+	ss03.BackgroundColor3 = Color3.fromRGB(150, 72, 8)
+	ss03Stroke.Color = Color3.fromRGB(255, 165, 45)
+	local cutBtn, cutStroke = button("", 5, true, 44)
+	local locked = button("SS-04  ·  SEVEN STARS  (LOCKED)", 6, false)
 	locked.TextSize = 14
 	local close = Instance.new("TextButton")
 	close.Font = Enum.Font.Code; close.Text = "CLOSE"; close.TextSize = 16
 	close.TextColor3 = Color3.fromRGB(200, 204, 220); close.BackgroundTransparency = 1
-	close.Size = UDim2.new(1, 0, 0, 30); close.LayoutOrder = 6; close.Parent = frame
+	close.Size = UDim2.new(1, 0, 0, 30); close.LayoutOrder = 7; close.Parent = frame
 
 	local function refreshCut()
 		local on = env.__StellarCutsceneOn ~= false
@@ -1199,6 +2129,7 @@ local function buildMenu()
 	function m.toggle() frame.Visible = not frame.Visible end
 
 	conns[#conns + 1] = ss01.Activated:Connect(function() task.spawn(runSS01) end)
+	conns[#conns + 1] = ss03.Activated:Connect(function() task.spawn(runSS03) end)
 	conns[#conns + 1] = cutBtn.Activated:Connect(function()
 		env.__StellarCutsceneOn = not (env.__StellarCutsceneOn ~= false)
 		refreshCut()
@@ -1277,4 +2208,4 @@ env.__StellarRemoteCleanup = function()
 	pcall(function() RunService:UnbindFromRenderStep("StellarShake") end)
 end
 
-print("[Stellar Remote v2] ready - equip the remote (or tap SR), set CUTSCENE ON/OFF, press SS-01.")
+print("[Stellar Remote v3] ready - equip the remote (or tap SR), set CUTSCENE ON/OFF, press SS-01 or SS-03.")
