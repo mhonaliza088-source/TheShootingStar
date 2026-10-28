@@ -3833,5 +3833,1309 @@ env.__StellarRemoteCleanup = function()
 	for _, o in ipairs(objs) do pcall(function() o:Destroy() end) end
 	pcall(function() RunService:UnbindFromRenderStep("StellarShake") end)
 end
+------------------------------------------------------------------------
+-- SS-05 · TESSERACT
+-- huge rainbow square target (5x5 grid) > explosive launch into space > rewind Earth > solar system, so far
+-- that both disappear > white engineer grid above the Milky Way with a VERY HUGE tesseract > it drops into
+-- the Milky Way and teleports above the Earth model > back in the game a map-sized tesseract turns rainbow,
+-- stops spinning and crashes > ASCENSION x5 (very intense) > FOLDED (half the map flips upside down, +200
+-- studs) > the tesseract collapses into a 200-stud rainbow stone.
+------------------------------------------------------------------------
+local RAINBOW = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 40, 40)),
+	ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 160, 30)),
+	ColorSequenceKeypoint.new(0.34, Color3.fromRGB(255, 240, 40)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(60, 255, 90)),
+	ColorSequenceKeypoint.new(0.67, Color3.fromRGB(40, 200, 255)),
+	ColorSequenceKeypoint.new(0.84, Color3.fromRGB(120, 80, 255)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 60, 200)),
+})
+local BLACKM     = Color3.fromRGB(44, 46, 56)     -- tech "black" (charcoal so it still reads in space)
+local CORE_BLACK = Color3.fromRGB(8, 8, 12)
+local TECHC      = Color3.fromRGB(170, 205, 225)  -- steel inlays before the tesseract turns rainbow
+
+local function lookCF(pos, dir)
+	local u = dir.Unit
+	local up = (math.abs(u.Y) > 0.98) and Vector3.new(1, 0, 0) or UP
+	return CFrame.lookAt(pos, pos + u, up)
+end
+
+-- ---------------------------------------------------------------- the 4D tesseract (technology style, no neon)
+local TxV, TxE = {}, {}
+for i = 0, 15 do
+	TxV[i + 1] = {
+		(bit32.band(i, 1) == 0) and -1 or 1,
+		(bit32.band(i, 2) == 0) and -1 or 1,
+		(bit32.band(i, 4) == 0) and -1 or 1,
+		(bit32.band(i, 8) == 0) and -1 or 1,
+	}
+end
+for i = 0, 15 do
+	for b = 0, 3 do
+		local j = bit32.bxor(i, bit32.lshift(1, b))
+		if j > i then TxE[#TxE + 1] = { i + 1, j + 1 } end
+	end
+end
+local function wrapA(a) return a - 2 * math.pi * math.floor(a / (2 * math.pi) + 0.5) end
+local function rot4(v, axw, ayw, azw, axy)
+	local x, y, z, w = v[1], v[2], v[3], v[4]
+	local c, s = math.cos(axw), math.sin(axw)
+	x, w = x * c - w * s, x * s + w * c
+	c, s = math.cos(ayw), math.sin(ayw)
+	y, w = y * c - w * s, y * s + w * c
+	c, s = math.cos(azw), math.sin(azw)
+	z, w = z * c - w * s, z * s + w * c
+	c, s = math.cos(axy), math.sin(axy)
+	x, y = x * c - y * s, x * s + y * c
+	return x, y, z, w
+end
+
+-- every edge is a black metal strut with rainbow inlays + black collars (long edges are chained, parts max out at 2048);
+-- every corner is a black joint with a rainbow gem; the middle holds a BLACK CORE inside a glass shell and 3 gimbal frames
+local function makeTess(parent, maxSize)
+	local folder = Instance.new("Folder")
+	folder.Name = "Tesseract"
+	local segMax = math.max(1, math.ceil(1.45 * maxSize / 1900))
+	local o = { folder = folder, parent = parent, segMax = segMax, edges = {}, nodes = {}, rings = {}, pts = {}, ws = {}, tt = 0 }
+	local function metal(color) return { Size = Vector3.new(1, 1, 1), Material = Enum.Material.Metal, Color = color or BLACKM, Reflectance = 0.12 } end
+	local function plastic() return { Size = Vector3.new(1, 1, 1), Material = Enum.Material.SmoothPlastic, Color = TECHC } end
+	for e = 1, #TxE do
+		local segs = {}
+		for k = 1, segMax do
+			segs[k] = { beam = part(metal(), folder), in1 = part(plastic(), folder), in2 = part(plastic(), folder), c1 = part(metal(), folder), c2 = part(metal(), folder), vis = true }
+		end
+		o.edges[e] = segs
+	end
+	for i = 1, 16 do o.nodes[i] = { box = part(metal(), folder), gem = part(plastic(), folder) } end
+	o.core = part({ Shape = BALLS, Size = V(1), Material = Enum.Material.Metal, Color = CORE_BLACK, Reflectance = 0.25 }, folder)
+	o.shell = part({ Shape = BALLS, Size = V(1), Material = Enum.Material.Glass, Color = Color3.fromRGB(40, 40, 60), Transparency = 0.55 }, folder)
+	for r = 1, 3 do
+		local ring = { bars = {}, ins = {} }
+		for k = 1, 4 do
+			ring.bars[k] = part(metal(Color3.fromRGB(14, 14, 18)), folder)
+			ring.ins[k] = part(plastic(), folder)
+		end
+		o.rings[r] = ring
+	end
+	return o
+end
+
+-- spin 0..1 | rainbow 0 steel .. 1 full rainbow | settle 0..1 eases the 4D rotation into the classic cube-in-cube
+local function updateTess(o, center, size, thick, dt, spin, rainbow, now, flash, settle)
+	o.tt += dt * spin
+	local t = o.tt
+	local k0 = 1 - (settle or 0)
+	local a1, a2, a3, a4 = wrapA(t * 0.7) * k0, wrapA(t * 0.45) * k0, wrapA(t * 0.31) * k0, wrapA(t * 0.18) * k0
+	local u = size / 3
+	local pts, ws = o.pts, o.ws
+	for i = 1, 16 do
+		local x, y, z, w = rot4(TxV[i], a1, a2, a3, a4)
+		pts[i] = center + Vector3.new(x, y, z) * ((4.4 / (4.4 - w)) * u)
+		ws[i] = w
+	end
+	local fl = math.min(flash, 1)
+	local th = thick * (1 + 0.5 * flash)
+	for e, ed in ipairs(TxE) do
+		local a, b = pts[ed[1]], pts[ed[2]]
+		local dir = b - a
+		local L = dir.Magnitude
+		local n = math.min(o.segMax, math.max(1, math.ceil(L / 1900)))
+		local sl = L / n
+		local base = lookCF(a, dir)
+		local rc = Color3.fromHSV((e / #TxE + now * 0.2 + (ws[ed[1]] + ws[ed[2]]) * 0.07) % 1, 0.85, 1)
+		local col = TECHC:Lerp(rc, rainbow):Lerp(Color3.new(1, 1, 1), fl * 0.75)
+		local segs = o.edges[e]
+		for k = 1, o.segMax do
+			local sg = segs[k]
+			if k <= n then
+				local cf = base * CFrame.new(0, 0, -(sl * (k - 0.5)))
+				sg.beam.Size = Vector3.new(th, th, sl + th * 0.25)
+				sg.beam.CFrame = cf
+				sg.in1.Size = Vector3.new(th * 0.22, th * 1.12, sl * 0.78)
+				sg.in1.CFrame = cf
+				sg.in1.Color = col
+				sg.in2.Size = Vector3.new(th * 1.12, th * 0.22, sl * 0.78)
+				sg.in2.CFrame = cf
+				sg.in2.Color = col
+				local cs = Vector3.new(th * 1.55, th * 1.55, th * 0.5)
+				sg.c1.Size = cs
+				sg.c2.Size = cs
+				sg.c1.CFrame = base * CFrame.new(0, 0, -(sl * (k - 1) + th * 0.2))
+				sg.c2.CFrame = base * CFrame.new(0, 0, -(sl * k - th * 0.2))
+				if not sg.vis then
+					sg.vis = true
+					sg.beam.Transparency = 0; sg.in1.Transparency = 0; sg.in2.Transparency = 0; sg.c1.Transparency = 0; sg.c2.Transparency = 0
+				end
+			elseif sg.vis then
+				sg.vis = false
+				sg.beam.Transparency = 1; sg.in1.Transparency = 1; sg.in2.Transparency = 1; sg.c1.Transparency = 1; sg.c2.Transparency = 1
+			end
+		end
+	end
+	local ns = th * 3.4
+	for i = 1, 16 do
+		local nd = o.nodes[i]
+		local cf = CFrame.new(pts[i])
+		nd.box.Size = Vector3.new(ns, ns, ns)
+		nd.box.CFrame = cf * CFrame.Angles(t * 0.3, t * 0.5, 0)
+		nd.gem.Size = Vector3.new(ns * 0.7, ns * 0.7, ns * 0.7)
+		nd.gem.CFrame = cf * CFrame.Angles(math.rad(45) + t * 0.3, math.rad(45) + t * 0.5, 0)
+		nd.gem.Color = TECHC:Lerp(Color3.fromHSV((i / 16 + now * 0.2) % 1, 0.85, 1), rainbow):Lerp(Color3.new(1, 1, 1), fl * 0.7)
+	end
+	o.core.Size = V(size * 0.2)
+	o.core.CFrame = CFrame.new(center)
+	o.shell.Size = V(size * 0.3)
+	o.shell.CFrame = CFrame.new(center)
+	local rs, bt = size * 0.17, size * 0.012
+	for r, ring in ipairs(o.rings) do
+		local cf = CFrame.new(center) * CFrame.Angles(now * 0.9 * r + r * 2.1, now * 0.6 + r, now * 0.4 * (4 - r))
+		for k = 1, 4 do
+			local horizontal = (k <= 2)
+			local sgn = (k % 2 == 1) and 1 or -1
+			local off = horizontal and Vector3.new(0, sgn * rs, 0) or Vector3.new(sgn * rs, 0, 0)
+			ring.bars[k].Size = horizontal and Vector3.new(2 * rs + bt, bt, bt) or Vector3.new(bt, 2 * rs + bt, bt)
+			ring.bars[k].CFrame = cf * CFrame.new(off)
+			ring.ins[k].Size = horizontal and Vector3.new(2 * rs * 0.7, bt * 0.5, bt * 1.25) or Vector3.new(bt * 0.5, 2 * rs * 0.7, bt * 1.25)
+			ring.ins[k].CFrame = cf * CFrame.new(off)
+			ring.ins[k].Color = TECHC:Lerp(Color3.fromHSV((now * 0.25 + r / 3 + k / 12) % 1, 0.85, 1), rainbow)
+		end
+	end
+	if not o.folder.Parent then o.folder.Parent = o.parent end
+end
+
+-- ---------------------------------------------------------------- huge rainbow square target (5 x 5 grid)
+local function buildTarget(parent, T, f, params, size)
+	local right = f:Cross(UP)
+	local half, step = size / 2, size / 5
+	local segs, cells, corners = {}, {}, {}
+	local function gpos(a, b)
+		local x = T.X + right.X * a + f.X * b
+		local z = T.Z + right.Z * a + f.Z * b
+		local hit = workspace:Raycast(Vector3.new(x, T.Y + 400, z), Vector3.new(0, -900, 0), params)
+		return Vector3.new(x, hit and hit.Position.Y or T.Y, z)
+	end
+	local function line(a0, b0, a1, b1, width)
+		local dist = math.sqrt((a1 - a0) ^ 2 + (b1 - b0) ^ 2)
+		local n = math.max(2, math.ceil(dist / 14))
+		local prev = gpos(a0, b0)
+		for j = 1, n do
+			local t = j / n
+			local a, b = a0 + (a1 - a0) * t, b0 + (b1 - b0) * t
+			local p1 = gpos(a, b)
+			local m = (prev + p1) / 2 + Vector3.new(0, 0.5, 0)
+			local d = p1 - prev
+			local seg = part({ Size = Vector3.new(width, 0.7, d.Magnitude + 1.4), CFrame = CFrame.lookAt(m, m + d), Material = NEONM, Color = Color3.new(1, 1, 1) }, parent)
+			segs[#segs + 1] = { p = seg, u = ((a + b) / size) * 0.5 + 0.5 }
+			prev = p1
+		end
+	end
+	for i = 0, 5 do -- 6 + 6 lines = a 5 x 5 grid
+		local c = -half + i * step
+		local w = (i == 0 or i == 5) and 9 or 3.2
+		line(c, -half, c, half, w)
+		line(-half, c, half, c, w)
+	end
+	for ix = 0, 4 do
+		for iy = 0, 4 do
+			local a, b = -half + (ix + 0.5) * step, -half + (iy + 0.5) * step
+			local gp = gpos(a, b)
+			local p = part({ Size = Vector3.new(step - 8, 0.4, step - 8), CFrame = CFrame.fromMatrix(gp + Vector3.new(0, 0.35, 0), right, UP, -f), Material = NEONM, Color = Color3.new(1, 1, 1), Transparency = 0.8 }, parent)
+			cells[#cells + 1] = { p = p, u = ((a + b) / size) * 0.5 + 0.5 }
+		end
+	end
+	for _, sa in ipairs({ -1, 1 }) do
+		for _, sb in ipairs({ -1, 1 }) do
+			local gp = gpos(sa * half, sb * half)
+			corners[#corners + 1] = part({ Size = Vector3.new(8, 1500, 8), Position = gp + Vector3.new(0, 750, 0), Material = NEONM, Color = Color3.new(1, 1, 1), Transparency = 0.15 }, parent)
+		end
+	end
+	local obj = {}
+	function obj.update(now, speed)
+		local t = now * speed
+		for _, s in ipairs(segs) do s.p.Color = Color3.fromHSV((s.u + t) % 1, 0.9, 1) end
+		for _, c in ipairs(cells) do
+			c.p.Color = Color3.fromHSV((c.u + t) % 1, 0.85, 1)
+			c.p.Transparency = 0.78 + 0.12 * math.sin(now * 3 + c.u * 8)
+		end
+		for i, c in ipairs(corners) do c.Color = Color3.fromHSV((i / 4 + t) % 1, 0.9, 1) end
+	end
+	function obj.destroy()
+		for _, s in ipairs(segs) do s.p:Destroy() end
+		for _, c in ipairs(cells) do c.p:Destroy() end
+		for _, c in ipairs(corners) do c:Destroy() end
+		segs, cells, corners = {}, {}, {}
+	end
+	return obj
+end
+
+-- ---------------------------------------------------------------- wormhole / portal
+local function buildPortal(parent, center, normal, radius)
+	local base = poseCF(center, normal) -- ring plane = local XY, local -Z = normal
+	local P = { rings = {} }
+	local function ring(R, width, segs, speed, hue0)
+		local m = Instance.new("Model")
+		local arcs = {}
+		for i = 1, segs do
+			local a = (i / segs) * math.pi * 2
+			arcs[i] = part({
+				Size = Vector3.new(width, 2 * math.pi * R / segs * 1.12, radius * 0.05),
+				CFrame = base * CFrame.new(math.cos(a) * R, math.sin(a) * R, 0) * CFrame.Angles(0, 0, a),
+				Material = NEONM, Color = Color3.fromHSV((hue0 + i / segs) % 1, 0.9, 1), Transparency = 1,
+			}, m)
+		end
+		m.WorldPivot = base
+		m.Parent = parent
+		m:ScaleTo(0.01)
+		P.rings[#P.rings + 1] = { m = m, speed = speed, arcs = arcs, hue0 = hue0 }
+	end
+	ring(radius, radius * 0.07, 56, 1.2, 0)
+	ring(radius * 0.76, radius * 0.06, 44, -1.7, 0.33)
+	ring(radius * 0.54, radius * 0.05, 32, 2.4, 0.66)
+	P.core = part({ Shape = CYLS, Size = Vector3.new(radius * 0.05, 1, 1), CFrame = base * CFrame.Angles(0, math.rad(90), 0), Color = Color3.fromRGB(10, 0, 30), Material = NEONM, Transparency = 1 }, parent)
+	function P.update(now, k) -- k: 0 closed .. 1 open
+		for _, r in ipairs(P.rings) do
+			r.m:ScaleTo(math.max(k, 0.01))
+			r.m:PivotTo(base * CFrame.Angles(0, 0, now * r.speed))
+			local n = #r.arcs
+			for i, p in ipairs(r.arcs) do
+				p.Color = Color3.fromHSV((r.hue0 + i / n + now * 0.3) % 1, 0.9, 1)
+				p.Transparency = 1 - 0.9 * k
+			end
+		end
+		local d = math.max(radius * 0.9 * k, 0.1)
+		P.core.Size = Vector3.new(radius * 0.05, d, d)
+		P.core.Transparency = 1 - 0.85 * k
+	end
+	function P.destroy()
+		for _, r in ipairs(P.rings) do r.m:Destroy() end
+		P.core:Destroy()
+	end
+	return P
+end
+
+-- ---------------------------------------------------------------- the cosmic stage
+local XS      = Vector3.new(0, 40000, 0)                -- Earth top
+local XSUN    = XS + Vector3.new(-3000, 5200, 1800)
+local XGAL    = XS + Vector3.new(0, -12000, 2000)       -- the Milky Way
+local XPC     = XS + Vector3.new(0, 17500, 2000)        -- centre of the white engineer grid
+local XSZ     = 4500                                    -- the VERY HUGE tesseract in space
+local XTC     = XPC + Vector3.new(0, 3800, 0)           -- where it hovers above the grid
+local XCT2    = XS + Vector3.new(0, 26000, -16000)      -- camera: tesseract above, grid, Milky Way below
+local XMID    = XS + Vector3.new(0, 14530, 384)
+local XCAM_F  = XS + Vector3.new(0, 4000, -22000)       -- camera while the tesseract drops into the galaxy
+-- the rewind goes SO far that Earth and the solar system shrink to nothing
+local XSHOT_E = { c = XS + Vector3.new(0, -250, 0), dir = Vector3.new(-0.7, 0.5, -0.5).Unit, d0 = 1500, d1 = 120000 }
+local XSHOT_S = { c = XSUN, dir = Vector3.new(0.15, 0.6, -0.78).Unit, d0 = 9000, d1 = 420000 }
+local function xPos(sh, a) return sh.c + sh.dir * (sh.d0 * (sh.d1 / sh.d0) ^ (a ^ 1.35)) end
+
+local function buildTessStage()
+	local Q = CONFIG.QUALITY
+	local folder = Instance.new("Folder")
+	folder.Name = "StellarTessStage"
+	folder.Parent = workspace
+	local earthF, solarF, farF = Instance.new("Folder"), Instance.new("Folder"), Instance.new("Folder")
+	earthF.Name, solarF.Name, farF.Name = "Earth", "SolarSystem", "Far"
+	earthF.Parent, solarF.Parent, farF.Parent = folder, folder, folder
+	local made = 0
+	local function P(props, parent)
+		made += 1
+		if made % 140 == 0 then task.wait() end
+		return part(props, parent or folder)
+	end
+	local rng = Random.new(77)
+	local WHITE = Color3.new(1, 1, 1)
+	local function ringBand(cf, rIn, rOut, segs, thick, color, transp, mat, parent)
+		segs = math.max(24, math.floor(segs * Q))
+		local mid, width = (rIn + rOut) / 2, rOut - rIn
+		local arc = (2 * math.pi * mid / segs) * 1.06
+		for i = 1, segs do
+			local a = (i / segs) * math.pi * 2
+			P({ Size = Vector3.new(width, thick, arc), CFrame = cf * CFrame.new(math.cos(a) * mid, 0, math.sin(a) * mid) * CFrame.Angles(0, -a, 0), Color = color, Transparency = transp, Material = mat or Enum.Material.SmoothPlastic }, parent)
+		end
+	end
+
+	-- Earth
+	do
+		local c = XS + Vector3.new(0, -1000, 0)
+		P({ Shape = BALLS, Size = V(2000), Position = c, Color = Color3.fromRGB(10, 45, 115), Reflectance = 0.08 }, earthF)
+		local lands = { Color3.fromRGB(46, 110, 52), Color3.fromRGB(70, 128, 58), Color3.fromRGB(104, 134, 70), Color3.fromRGB(160, 138, 84) }
+		for _ = 1, 8 do
+			local cen, spread = randUnit(rng), rng:NextNumber(0.12, 0.26)
+			for _ = 1, math.max(6, math.floor(14 * Q)) do
+				local d = (cen + randUnit(rng) * spread).Unit
+				local diam = rng:NextNumber(70, 190)
+				P({ Shape = CYLS, Size = Vector3.new(7, diam, diam), CFrame = flatCF(c + d * 999.2, d), Color = lands[rng:NextInteger(1, #lands)] }, earthF)
+			end
+		end
+		P({ Shape = BALLS, Size = V(2044), Position = c, Color = Color3.fromRGB(90, 160, 255), Material = NEONM, Transparency = 0.9 }, earthF)
+	end
+
+	-- solar system
+	do
+		P({ Shape = BALLS, Size = V(520), Position = XSUN, Color = Color3.fromRGB(255, 205, 90), Material = NEONM }, solarF)
+		P({ Shape = BALLS, Size = V(900), Position = XSUN, Color = Color3.fromRGB(255, 150, 40), Material = NEONM, Transparency = 0.85 }, solarF)
+		local planets = {
+			{ 450, 38, Color3.fromRGB(150, 150, 150) }, { 780, 58, Color3.fromRGB(230, 200, 140) },
+			{ 1100, 62, Color3.fromRGB(60, 120, 220) }, { 1450, 48, Color3.fromRGB(200, 90, 60) },
+			{ 1950, 150, Color3.fromRGB(210, 170, 130) }, { 2350, 130, Color3.fromRGB(232, 212, 162) },
+			{ 2700, 90, Color3.fromRGB(150, 220, 230) }, { 3050, 88, Color3.fromRGB(70, 100, 230) },
+		}
+		local pr = Random.new(5)
+		for _, pl in ipairs(planets) do
+			ringBand(CFrame.new(XSUN), pl[1] - 10, pl[1] + 10, math.floor(pl[1] / 20), 4, Color3.fromRGB(110, 150, 210), 0.3, NEONM, solarF)
+			local a = pr:NextNumber(0, math.pi * 2)
+			P({ Shape = BALLS, Size = V(pl[2] * 2), Position = XSUN + Vector3.new(math.cos(a) * pl[1], 0, math.sin(a) * pl[1]), Color = pl[3] }, solarF)
+		end
+	end
+
+	-- Milky Way (far below)
+	do
+		local R = 9000
+		for _ = 1, math.floor(1100 * Q) do
+			local t = rng:NextNumber() ^ 0.65
+			local rr = t * R
+			local arm = rng:NextInteger(0, 3)
+			local ang = arm * (math.pi / 2) + t * math.pi * 3.4 + rng:NextNumber(-1, 1) * (0.16 + 0.32 * (1 - t))
+			local y = rng:NextNumber(-1, 1) * (30 + 360 * (1 - t) ^ 2)
+			local col = Color3.fromRGB(255, 225, 170):Lerp(Color3.fromRGB(150, 185, 255), math.clamp(t * 1.2, 0, 1))
+			if rng:NextNumber() < 0.06 then col = Color3.fromRGB(255, 140, 200) end
+			P({ Shape = BALLS, Size = V(rng:NextNumber(70, 230) * (1 - 0.4 * t)), Position = XGAL + Vector3.new(math.cos(ang) * rr, y, math.sin(ang) * rr), Color = col, Material = NEONM, Transparency = rng:NextNumber(0, 0.3) }, farF)
+		end
+		P({ Shape = BALLS, Size = V(1800), Position = XGAL, Color = Color3.fromRGB(255, 230, 170), Material = NEONM, Transparency = 0.55 }, farF)
+		P({ Shape = BALLS, Size = V(3600), Position = XGAL, Color = Color3.fromRGB(255, 220, 160), Material = NEONM, Transparency = 0.86 }, farF)
+	end
+
+	-- plain WHITE engineer-style grid (thin lines, ruler ticks, crosses, polar circles) - no rainbow, no pillars
+	do
+		local half, step = 7000, 1000
+		for i = 0, 14 do
+			local a = -half + i * step
+			local th = (i == 7) and 18 or 9
+			for k = 0, 6 do
+				local c = -6000 + k * 2000
+				P({ Size = Vector3.new(2000, th, th), Position = XPC + Vector3.new(c, 0, a), Color = WHITE, Material = NEONM }, farF)
+				P({ Size = Vector3.new(th, th, 2000), Position = XPC + Vector3.new(a, 0, c), Color = WHITE, Material = NEONM }, farF)
+			end
+			P({ Size = Vector3.new(9, 9, 260), Position = XPC + Vector3.new(a, 0, -half - 130), Color = WHITE, Material = NEONM }, farF)
+			P({ Size = Vector3.new(9, 9, 260), Position = XPC + Vector3.new(a, 0, half + 130), Color = WHITE, Material = NEONM }, farF)
+			P({ Size = Vector3.new(260, 9, 9), Position = XPC + Vector3.new(-half - 130, 0, a), Color = WHITE, Material = NEONM }, farF)
+			P({ Size = Vector3.new(260, 9, 9), Position = XPC + Vector3.new(half + 130, 0, a), Color = WHITE, Material = NEONM }, farF)
+		end
+		for ix = -6, 6, 2 do
+			for iz = -6, 6, 2 do
+				P({ Size = Vector3.new(160, 9, 9), Position = XPC + Vector3.new(ix * 1000, 0, iz * 1000), Color = WHITE, Material = NEONM }, farF)
+				P({ Size = Vector3.new(9, 9, 160), Position = XPC + Vector3.new(ix * 1000, 0, iz * 1000), Color = WHITE, Material = NEONM }, farF)
+			end
+		end
+		for _, R in ipairs({ 2000, 4000, 6000 }) do
+			ringBand(CFrame.new(XPC), R - 5, R + 5, 80, 9, WHITE, 0, NEONM, farF)
+		end
+	end
+	-- a second white grid lying on the Milky Way's plane
+	do
+		local half, step = 9000, 2250
+		for i = 0, 8 do
+			local a = -half + i * step
+			for k = 0, 8 do
+				local c = -8000 + k * 2000
+				P({ Size = Vector3.new(2000, 14, 14), Position = XGAL + Vector3.new(c, -80, a), Color = WHITE, Material = NEONM, Transparency = 0.3 }, farF)
+				P({ Size = Vector3.new(14, 14, 2000), Position = XGAL + Vector3.new(a, -80, c), Color = WHITE, Material = NEONM, Transparency = 0.3 }, farF)
+			end
+		end
+	end
+
+	return { folder = folder, earthF = earthF, solarF = solarF, farF = farF, xt = makeTess(folder, XSZ) }
+end
+
+-- ---------------------------------------------------------------- crushing, folding the map
+local function makeCrusher(T, S)
+	local list = {}
+	if CONFIG.CARVE_LAND then
+		pcall(function()
+			local char = player.Character
+			local rp = char and char:FindFirstChild("HumanoidRootPart")
+			local ex = {}
+			for _, pl in ipairs(Players:GetPlayers()) do
+				if pl.Character then ex[#ex + 1] = pl.Character end
+			end
+			local op = OverlapParams.new()
+			op.FilterType = Enum.RaycastFilterType.Exclude
+			op.FilterDescendantsInstances = ex
+			for _, p in ipairs(workspace:GetPartBoundsInBox(CFrame.new(T + UP * 700), Vector3.new(S * 0.9, 1400, S * 0.9), op)) do
+				if #list >= 6000 then break end
+				if p ~= workspace.Terrain and p.Size.Magnitude <= 700 then
+					local m = p:FindFirstAncestorWhichIsA("Model")
+					if not (m and m:FindFirstChildOfClass("Humanoid")) and not (rp and (p.Position - rp.Position).Magnitude < 32) then
+						list[#list + 1] = { p, p.Position.Y - T.Y }
+					end
+				end
+			end
+			table.sort(list, function(a, b) return a[2] > b[2] end)
+		end)
+	end
+	local idx = 1
+	return function(headY) -- erases everything whose height is above headY (the falling bottom face)
+		while list[idx] and list[idx][2] >= headY do
+			local p = list[idx][1]
+			idx += 1
+			if p.Parent then p.Parent = nil end
+		end
+	end
+end
+
+local function collectFold(T, f, rootPos)
+	local right = f:Cross(UP)
+	local flipLeft = (rootPos - T):Dot(right) >= 0 -- you stay on your side, the other half flips
+	local parts, cfs, n = {}, {}, 0
+	for _, d in ipairs(workspace:GetDescendants()) do
+		n += 1
+		if n % 2500 == 0 then task.wait() end
+		if #parts >= CONFIG.FOLD_MAX_PARTS then break end
+		if d:IsA("BasePart") and d.Anchored and d.CanQuery and d ~= workspace.Terrain then
+			local lat = (d.Position - T):Dot(right) * (flipLeft and -1 or 1)
+			if lat > d.Size.Magnitude / 2 + 6 and (d.Position - rootPos).Magnitude > 70 then
+				local m = d:FindFirstAncestorWhichIsA("Model")
+				if not (m and m:FindFirstChildOfClass("Humanoid")) then
+					parts[#parts + 1] = d
+					cfs[#cfs + 1] = d.CFrame
+				end
+			end
+		end
+	end
+	return { parts = parts, cfs = cfs, T = T, axis = flipLeft and f or -f }
+end
+
+local function applyFold(fd, ease) -- ease 0 = original map, 1 = folded over and 200 studs up
+	local X = CFrame.new(fd.T + Vector3.new(0, 200 * ease, 0)) * CFrame.fromAxisAngle(fd.axis, math.pi * ease) * CFrame.new(-fd.T)
+	local plist, clist = {}, {}
+	for i, p in ipairs(fd.parts) do
+		if p.Parent then
+			plist[#plist + 1] = p
+			clist[#clist + 1] = X * fd.cfs[i]
+		end
+	end
+	local CH = 4000
+	for s = 1, #plist, CH do
+		local e = math.min(s + CH - 1, #plist)
+		pcall(function()
+			workspace:BulkMoveTo(table.move(plist, s, e, 1, {}), table.move(clist, s, e, 1, {}), Enum.BulkMoveMode.FireCFrameChanged)
+		end)
+	end
+end
+
+local function foldTween(fd, from, to, dur)
+	runFor(dur, function(a) applyFold(fd, from + (to - from) * smooth(a)) end)
+	applyFold(fd, to)
+end
+
+-- ---------------------------------------------------------------- THE SS-05 SEQUENCE
+local function runSS05()
+	if busy then return end
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hum and root) then return end
+	busy = true
+	if menu then menu.close() end
+	local useCut = env.__StellarCutsceneOn ~= false
+	local S = newSession(useCut, hum)
+	local hud, cam, fx = S.hud, S.cam, S.fx
+	local rootPos = root.Position
+	local TSIZE = math.min(CONFIG.TESS_SIZE, 1400)
+	local STONE = 200 -- the stone tesseract is only 200 studs
+	local pc, foldData, tfold -- persistent bits (tesseract, stone, folded map) that outlive the cutscene
+	local extra            -- temporary screen effects used by the intense parts
+
+	local ok, err = pcall(function()
+		sfx(SND.click, 1.2, 1, 3)
+		if env.__StellarTessCleanup then pcall(env.__StellarTessCleanup) end
+		tfold = Instance.new("Folder")
+		tfold.Name = "StellarTess"
+		tfold.Parent = workspace
+		local myCleanup
+		myCleanup = function()
+			if pc then pc:Disconnect(); pc = nil end
+			if foldData then pcall(applyFold, foldData, 0); foldData = nil end
+			if tfold and tfold.Parent then tfold:Destroy() end
+			if env.__StellarTessCleanup == myCleanup then env.__StellarTessCleanup = nil end
+		end
+		env.__StellarTessCleanup = myCleanup
+
+		-- ---------- aim ----------
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { char }
+		local vs = cam.ViewportSize
+		local ray = cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+		local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
+		local T
+		if res then
+			T = res.Position
+		else
+			local p = ray.Origin + ray.Direction * 150
+			local down = workspace:Raycast(p + Vector3.new(0, 200, 0), Vector3.new(0, -800, 0), params)
+			T = down and down.Position or p
+		end
+		local toPlayer = Vector3.new(rootPos.X - T.X, 0, rootPos.Z - T.Z)
+		if toPlayer.Magnitude < 5 then toPlayer = Vector3.new(0, 0, 1) end
+		local f = -toPlayer.Unit -- "forward" = away from you
+
+		local target = buildTarget(S.realFolder, T, f, params, CONFIG.TARGET_SIZE)
+		local targetSpeed = 0.25
+
+		-- ---------- screen overlay: rainbow speed lines, glitch bars, rainbow impact frames, chromatic text ----------
+		local warp, rayBurst, glitchAmt, textSplit = 0, 0, 0, 0
+		local NR = 28
+		local rays = {}
+		for i = 1, NR do
+			local r = Instance.new("Frame")
+			r.BorderSizePixel = 0
+			r.AnchorPoint = Vector2.new(0.5, 1)
+			r.Position = UDim2.fromScale(0.5, 0.5)
+			r.Size = UDim2.new(0, 4, 0, 700)
+			r.Rotation = (i / NR) * 360
+			r.BackgroundColor3 = Color3.new(1, 1, 1)
+			r.BackgroundTransparency = 1
+			r.ZIndex = 6
+			local g = Instance.new("UIGradient")
+			g.Rotation = 90
+			g.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.6, 1), NumberSequenceKeypoint.new(1, 1) })
+			g.Parent = r
+			r.Parent = hud.gui
+			rays[i] = r
+		end
+		local glitchBars = {}
+		for i = 1, 7 do
+			local b = Instance.new("Frame")
+			b.BorderSizePixel = 0
+			b.BackgroundTransparency = 1
+			b.Size = UDim2.new(1, 0, 0, 8)
+			b.ZIndex = 7
+			b.Parent = hud.gui
+			glitchBars[i] = b
+		end
+		local function updateOverlay(dt, now)
+			rayBurst = rayBurst * math.exp(-dt * 6)
+			local w = math.max(warp, rayBurst)
+			for i, r in ipairs(rays) do
+				local flick = 0.55 + 0.45 * math.sin(now * 17 + i * 1.7)
+				r.BackgroundTransparency = 1 - math.clamp(w * flick, 0, 0.95)
+				r.Size = UDim2.new(0, 3 + 6 * w, 0, 500 + 700 * w)
+				r.Rotation = (i / NR) * 360 + now * 25 * w
+				r.BackgroundColor3 = Color3.fromHSV((i / NR + now * 0.5) % 1, 0.65, 1)
+			end
+			for _, b in ipairs(glitchBars) do
+				if glitchAmt > 0.01 and math.random() < 0.25 * glitchAmt + 0.02 then
+					b.Position = UDim2.new(0, 0, math.random(), 0)
+					b.Size = UDim2.new(math.random(40, 100) / 100, 0, 0, math.random(3, 16))
+					b.BackgroundColor3 = Color3.fromHSV(math.random(), 0.7, 1)
+					b.BackgroundTransparency = 0.45
+				else
+					b.BackgroundTransparency = 1
+				end
+			end
+		end
+
+		local function mkText(color)
+			local t = Instance.new("TextLabel")
+			t.BackgroundTransparency = 1
+			t.Font = Enum.Font.GothamBlack
+			t.TextSize = 64
+			t.Text = ""
+			t.TextColor3 = color
+			t.TextStrokeColor3 = Color3.new(0, 0, 0)
+			t.TextStrokeTransparency = 1
+			t.TextTransparency = 1
+			t.AnchorPoint = Vector2.new(0.5, 0.5)
+			t.Position = UDim2.new(0.5, 0, 0.5, 0)
+			t.Size = UDim2.new(1, 0, 0, 220)
+			t.ZIndex = 11
+			t.Parent = hud.gui
+			return t
+		end
+		local textR, textG, textB = mkText(Color3.fromRGB(255, 0, 60)), mkText(Color3.fromRGB(0, 255, 120)), mkText(Color3.fromRGB(40, 120, 255))
+		local big = mkText(Color3.new(1, 1, 1))
+		big.ZIndex = 12
+		local bigGrad = Instance.new("UIGradient")
+		bigGrad.Color = RAINBOW
+		bigGrad.Parent = big
+		local function setBig(text, size, hidden)
+			for _, t in ipairs({ big, textR, textG, textB }) do
+				t.Text = text
+				t.TextSize = size
+			end
+			big.TextTransparency = hidden and 1 or 0
+			big.TextStrokeTransparency = hidden and 1 or 0.35
+			for _, t in ipairs({ textR, textG, textB }) do t.TextTransparency = hidden and 1 or 0.35 end
+		end
+		local function showBig(text, size) setBig(text, size or 64, false) end
+		local function hideBig() setBig(big.Text, big.TextSize, true) end
+
+		local rb = Instance.new("Frame")
+		rb.BorderSizePixel = 0
+		rb.BackgroundColor3 = Color3.new(1, 1, 1)
+		rb.BackgroundTransparency = 1
+		rb.Size = UDim2.fromScale(1, 1)
+		rb.ZIndex = 15
+		rb.Parent = hud.gui
+		local rg = Instance.new("UIGradient")
+		rg.Color = RAINBOW
+		rg.Parent = rb
+		local function impactFrames() -- strobing rainbow / white / black impact frames + a burst of rainbow rays
+			task.spawn(function()
+				local seq = {
+					{ Color3.new(1, 1, 1), 0.0, 0 }, { Color3.new(1, 1, 1), 0.0, 90 }, { Color3.fromRGB(8, 8, 10), 0.05, 45 },
+					{ Color3.new(1, 1, 1), 0.1, 135 }, { Color3.fromRGB(8, 8, 10), 0.1, 20 }, { Color3.new(1, 1, 1), 0.2, 200 },
+					{ Color3.fromRGB(8, 8, 10), 0.3, 70 }, { Color3.new(1, 1, 1), 0.35, 300 },
+				}
+				for _, fr in ipairs(seq) do
+					rb.BackgroundColor3 = fr[1]
+					rb.BackgroundTransparency = fr[2]
+					rg.Rotation = fr[3]
+					rayBurst = 1
+					RunService.RenderStepped:Wait()
+				end
+				TweenService:Create(rb, TweenInfo.new(0.4), { BackgroundTransparency = 1 }):Play()
+			end)
+		end
+
+		local shakeAmp = 0
+		local function camSet(cf, fov)
+			if not useCut then return end
+			cam.CFrame = cf * shakeRot(shakeAmp)
+			cam.FieldOfView = fov
+			shakeAmp = shakeAmp * 0.9
+		end
+		local function blur(v) if fx then fx.blur.Size = v end end
+		local function rollWobble(a) return CFrame.Angles(0, 0, math.sin(a * 6) * 0.03) end
+
+		-- state of the stage tesseract (cutscene) and the huge real one
+		local xs = { on = false, center = XTC, size = XSZ, spin = 1, rainbow = 1, flash = 0, settle = 0, obj = nil }
+		local rt = { on = false, center = T + UP * (TSIZE * 1.35), size = TSIZE, thick = TSIZE * 0.02, spin = 1, rainbow = 0, flash = 0, settle = 0, obj = nil }
+		local stone, stoneGrads, orbit
+		S.live[#S.live + 1] = RunService.RenderStepped:Connect(function(dt)
+			local now = os.clock()
+			target.update(now, targetSpeed)
+			bigGrad.Rotation = (now * 120) % 360
+			textR.Position = UDim2.new(0.5, -textSplit, 0.5, 0)
+			textB.Position = UDim2.new(0.5, textSplit, 0.5, 0)
+			textG.Position = UDim2.new(0.5, 0, 0.5, textSplit * 0.4)
+			updateOverlay(dt, now)
+			if xs.on and xs.obj then
+				updateTess(xs.obj, xs.center, xs.size, xs.size * 0.02, dt, xs.spin, xs.rainbow, now, xs.flash, xs.settle)
+				xs.flash = xs.flash * 0.9
+			end
+		end)
+		-- persistent updater: the huge tesseract, the stone and the orbiting balls keep running after the cutscene
+		pc = RunService.RenderStepped:Connect(function(dt)
+			local now = os.clock()
+			if rt.on and rt.obj then
+				updateTess(rt.obj, rt.center, rt.size, rt.thick, dt, rt.spin, rt.rainbow, now, rt.flash, rt.settle)
+				rt.flash = rt.flash * 0.9
+			end
+			if stoneGrads then
+				for _, g in ipairs(stoneGrads) do g.Rotation = (now * 50) % 360 end
+			end
+			if orbit then
+				local c = orbit.center
+				local a1 = now * 1.6
+				orbit.yb.Position = c + Vector3.new(math.cos(a1) * orbit.R1, math.sin(a1 * 0.7) * orbit.R1 * 0.35, math.sin(a1) * orbit.R1)
+				orbit.yh.Position = orbit.yb.Position
+				local a2 = -now * 2.1 + 2
+				local tilt = CFrame.Angles(0, 0, math.rad(60))
+				orbit.ib.Position = c + tilt * Vector3.new(math.cos(a2) * orbit.R2, math.sin(a2 * 0.5) * orbit.R2 * 0.25, math.sin(a2) * orbit.R2)
+				orbit.ih.Position = orbit.ib.Position
+			end
+		end)
+
+		-- rainbow shockwave rings
+		local function ringWaveRainbow(center, maxR, dur, delay)
+			task.spawn(function()
+				task.wait(delay)
+				local SEGS = 120
+				local ring = {}
+				for i = 1, SEGS do ring[i] = part({ Size = Vector3.new(12, 6, 12), Color = Color3.fromHSV(i / SEGS, 0.9, 1), Material = NEONM }, tfold) end
+				runFor(dur, function(a)
+					local rad = 10 + (a ^ 0.55) * maxR
+					local width = 40 * (1 - a) + 4
+					local arc = 2 * math.pi * rad / SEGS * 1.1
+					for i, p in ipairs(ring) do
+						local ang = (i / SEGS) * math.pi * 2
+						p.Size = Vector3.new(width, 10 * (1 - a) + 1, arc)
+						p.CFrame = CFrame.new(center + Vector3.new(0, 4, 0)) * CFrame.new(math.cos(ang) * rad, 0, math.sin(ang) * rad) * CFrame.Angles(0, -ang, 0)
+						p.Transparency = 0.1 + 0.9 * a
+					end
+				end)
+				for _, p in ipairs(ring) do p:Destroy() end
+			end)
+		end
+		-- rainbow lightning from the tesseract's corners down to the ground
+		local function bolts(n)
+			task.spawn(function()
+				local made = {}
+				for _ = 1, n do
+					local sp = (rt.obj and rt.obj.pts[math.random(1, 16)]) or rt.center
+					local gp = T + Vector3.new(rnd() * TSIZE * 0.7, 0, rnd() * TSIZE * 0.7)
+					local hue = math.random()
+					local prev = sp
+					for s = 1, 4 do
+						local nxt = (s == 4) and gp or (sp:Lerp(gp, s / 4) + Vector3.new(rnd() * 140, rnd() * 60, rnd() * 140))
+						local d = nxt - prev
+						if d.Magnitude > 1 then
+							made[#made + 1] = part({ Size = Vector3.new(12, 12, math.min(d.Magnitude, 2040)), CFrame = lookCF((prev + nxt) / 2, d), Color = Color3.fromHSV(hue, 0.7, 1), Material = NEONM }, tfold)
+						end
+						prev = nxt
+					end
+				end
+				task.wait(0.14)
+				for _, p in ipairs(made) do p:Destroy() end
+			end)
+		end
+		local sparkEm
+		local function sparksAt(n)
+			if sparkEm then sparkEm:Emit(n) end
+		end
+
+		-- ================================================================
+		saveLighting()
+		hud.flash.BackgroundColor3 = Color3.new(1, 1, 1)
+		if useCut then
+			setControls(false)
+			hum.WalkSpeed = 0; hum.JumpPower = 0; hum.JumpHeight = 0
+			cam.CameraType = Enum.CameraType.Scriptable
+			hud.bars(true)
+		end
+		hud.setLabel("SS-05  ·  TESSERACT")
+		hud.setSub("TARGET LOCKED")
+		sfx(SND.launch, 1.4, 0.8, 6)
+
+		local stage, stageReady = nil, false
+		local startCF = cam.CFrame
+		if useCut then
+			task.spawn(function()
+				local okb, res2 = pcall(buildTessStage)
+				if okb then stage = res2 else warn("[StellarRemote] stage build failed: " .. tostring(res2)) end
+				stageReady = true
+			end)
+		end
+
+		if useCut then
+			----------------------------------------------------------------
+			-- CUTSCENE ON
+			----------------------------------------------------------------
+			local lockPos = T + toPlayer.Unit * (CONFIG.TARGET_SIZE * 1.1) + Vector3.new(0, CONFIG.TARGET_SIZE * 0.55, 0)
+			local lockCF = CFrame.lookAt(lockPos, T)
+			runFor(TS(0.9), function(a)
+				cam.CFrame = startCF:Lerp(lockCF, smooth(a))
+				targetSpeed = 0.25 + 1.2 * a
+			end)
+
+			-- ===== LAUNCH: clouds, streaking light, rainbow shockwaves, speed lines, thinning atmosphere =====
+			hud.setLabel("◂◂  REWIND")
+			sfx(SND.whoosh, 2, 0.6, 8)
+			sfx(SND.boom, 2, 0.7, 6)
+			local launchObjs = {}
+			for _ = 1, 70 do
+				launchObjs[#launchObjs + 1] = part({ Shape = BALLS, Size = V(120 + math.random() * 280), Position = T + Vector3.new(rnd() * 1400, 450 + math.random() * 2000, rnd() * 1400), Color = Color3.new(1, 1, 1), Transparency = 0.45 + math.random() * 0.3 }, S.realFolder)
+			end
+			for _ = 1, 240 do
+				local ang, rad, h = math.random() * math.pi * 2, 30 + math.random() * 390, math.random() * 3300
+				launchObjs[#launchObjs + 1] = part({ Size = Vector3.new(1.6, 90, 1.6), Position = T + Vector3.new(math.cos(ang) * rad, h, math.sin(ang) * rad), Color = Color3.fromHSV(h / 3300, 0.6, 1), Material = NEONM, Transparency = 0.2 + math.random() * 0.4 }, S.realFolder)
+			end
+			ringWaveRainbow(T, 1000, 1.3, 0)
+			ringWaveRainbow(T, 1700, 1.6, 0.35)
+			impactFrames()
+			runFor(TS(2.0), function(a)
+				local alt = 6 + 3300 * (a ^ 1.8)
+				local axis = T + UP * alt
+				local ang = a * 6 + 0.8
+				local spiral = Vector3.new(math.cos(ang), 0, math.sin(ang)) * (150 * smooth(math.min(a * 3, 1)))
+				local pos = lockPos:Lerp(axis + spiral, smooth(math.min(a * 2.2, 1)))
+				local look = T:Lerp(axis + UP * 900, smooth((a - 0.25) / 0.6))
+				cam.CFrame = CFrame.lookAt(pos, look) * CFrame.Angles(0, 0, math.sin(a * 9) * 0.06 * a) * shakeRot(0.002 + 0.01 * a)
+				cam.FieldOfView = 70 + 50 * (a ^ 1.4)
+				fx.blur.Size = 4 + 18 * a
+				fx.bloom.Intensity = 0.8 + 1.4 * a
+				warp = smooth(a) * 0.95
+				glitchAmt = a * 0.5
+				targetSpeed = 0.5 + 6 * a
+				local d = smooth((a - 0.35) / 0.65)
+				fx.cc.Brightness = -0.15 * d
+				fx.cc.TintColor = Color3.new(1, 1, 1):Lerp(Color3.fromRGB(150, 170, 255), d)
+				hud.setSub(("ALT  %s M   ·   ESCAPE VELOCITY"):format(fmt(alt * 0.28)))
+				if a > 0.82 then hud.flash.BackgroundTransparency = 1 - smooth((a - 0.82) / 0.18) end
+			end)
+			hud.flash.BackgroundTransparency = 0
+			for _, p in ipairs(launchObjs) do p:Destroy() end
+			while not stageReady do RunService.RenderStepped:Wait() end
+			if not stage then error("stage not built") end
+			S.stage = stage
+			S.resetFx()
+			fx.bloom.Intensity = 0.8
+			S.enterSpace()
+			S.hideWorld()
+			xs.obj = stage.xt
+			xs.on = true
+			fx.cc.TintColor = Color3.fromRGB(190, 235, 255)
+			fx.cc.Saturation = -0.4
+			warp, glitchAmt = 0.55, 0.9
+
+			-- ===== REWIND: lock on Earth and pull back until it is gone =====
+			hud.setLabel("◂◂  REWIND  ·  EARTH")
+			runFor(TS(1.7), function(a, dt, e)
+				camSet(CFrame.lookAt(xPos(XSHOT_E, a), XSHOT_E.c) * rollWobble(a), 72 + 18 * a)
+				hud.flash.BackgroundTransparency = smooth(e / 0.4)
+				hud.setSub("REWINDING  " .. fmt(a * 13800000000) .. "  YEARS")
+				blur(4 + 6 * a)
+			end)
+			-- ...whip to the solar system, lock on it and keep rewinding until it is gone too
+			local pe, ps0 = xPos(XSHOT_E, 1), xPos(XSHOT_S, 0)
+			stage.earthF.Parent = nil
+			runFor(TS(0.22), function(a)
+				local k = smooth(a)
+				camSet(CFrame.lookAt(pe:Lerp(ps0, k), XSHOT_E.c:Lerp(XSHOT_S.c, k)), 72 + 30 * math.sin(a * math.pi))
+				blur(24 * math.sin(a * math.pi))
+			end)
+			hud.setLabel("◂◂  REWIND  ·  SOLAR SYSTEM")
+			runFor(TS(1.9), function(a)
+				camSet(CFrame.lookAt(xPos(XSHOT_S, a), XSHOT_S.c) * rollWobble(a + 1), 72 + 14 * a)
+				hud.setSub("REWINDING  " .. fmt(13800000000 + a * 40000000000) .. "  YEARS")
+				blur(4 + 6 * (1 - a))
+			end)
+			-- ===== the camera goes up to the space grid: Earth and the solar system are far behind =====
+			local pse = xPos(XSHOT_S, 1)
+			stage.solarF.Parent = nil
+			hud.setLabel("")
+			hud.setSub("")
+			S.resetFx()
+			fx.cc.TintColor = Color3.fromRGB(235, 240, 255)
+			runFor(TS(1.3), function(a)
+				local k = smooth(a)
+				camSet(CFrame.lookAt(pse:Lerp(XCT2, k), XSHOT_S.c:Lerp(XMID, k)), 72 - 6 * k)
+				warp = 0.6 * (1 - k)
+				glitchAmt = 0.4 * (1 - k)
+			end)
+			warp, glitchAmt = 0, 0
+			-- ===== the VERY HUGE tesseract above the Milky Way, on the white grid =====
+			showBig("T  E  S  S  E  R  A  C  T", 62)
+			sfx(SND.boom, 1.5, 0.5, 6)
+			runFor(TS(1.5), function(a)
+				camSet(CFrame.lookAt(XCT2, XMID), 66)
+				if a > 0.78 then
+					big.TextTransparency = (a - 0.78) / 0.22
+					for _, t in ipairs({ textR, textG, textB }) do t.TextTransparency = 0.35 + 0.65 * ((a - 0.78) / 0.22) end
+				end
+			end)
+			hideBig()
+			-- ===== it drops into the Milky Way =====
+			sfx(SND.whoosh, 2, 0.5, 6)
+			local portal
+			runFor(TS(1.5), function(a)
+				xs.center = XTC:Lerp(XGAL, a ^ 2)
+				xs.size = XSZ * (1 - smooth((a - 0.86) / 0.14) * 0.97)
+				camSet(CFrame.lookAt(XCT2:Lerp(XCAM_F, smooth(a)), xs.center), 70)
+				blur(8 * a)
+				warp = 0.35 * a
+				if a > 0.78 and not portal then portal = buildPortal(stage.farF, XGAL + Vector3.new(0, 40, 0), UP, 5200) end
+				if portal then portal.update(os.clock(), smooth((a - 0.78) / 0.22)) end
+			end)
+			-- ===== ...and instantly teleports above the Earth model (it never touches it) =====
+			warp = 0
+			impactFrames()
+			sfx(SND.boom, 2.5, 0.8, 8)
+			if portal then portal.destroy() end
+			blur(0)
+			stage.earthF.Parent = stage.folder
+			local camA = XS + Vector3.new(-4200, 2400, -5600)
+			local pcA = XS + Vector3.new(0, 1800, 0)
+			local portalB = buildPortal(stage.folder, pcA, (camA - pcA).Unit, 1700)
+			xs.center, xs.size, xs.flash = pcA, 200, 2
+			local hoverA = XS + Vector3.new(0, 3000, 0)
+			runFor(TS(1.2), function(a)
+				local k = smooth(a)
+				portalB.update(os.clock(), math.min(a / 0.3, 1) * (1 - smooth((a - 0.8) / 0.2)))
+				xs.center = pcA:Lerp(hoverA, k)
+				xs.size = 200 + 1600 * k
+				camSet(CFrame.lookAt(camA + Vector3.new(120 * a, 40 * a, 160 * a), XS + Vector3.new(0, 1700, 0)), 62)
+				if a > 0.8 then hud.flash.BackgroundTransparency = 1 - smooth((a - 0.8) / 0.2) end
+			end)
+			hud.flash.BackgroundTransparency = 0
+			portalB.destroy()
+			xs.on = false
+			stage.folder:Destroy()
+			S.leaveSpace()
+			S.resetFx()
+			hud.setLabel("")
+			hud.setSub("")
+		else
+			----------------------------------------------------------------
+			-- CUTSCENE OFF: just the big target, then the wormhole
+			----------------------------------------------------------------
+			sfx(SND.launch, 1.3, 0.45, 9)
+			local CH = math.min(CONFIG.LIVE_CHARGE, 3.5)
+			runFor(CH, function(a, dt, e)
+				targetSpeed = 0.25 + 3 * a
+				hud.setSub(("TESSERACT INCOMING  ·  %.1f"):format(math.max(CH - e, 0)))
+			end)
+			hud.setSub("")
+		end
+
+		-- ================================================================
+		-- THE GAME: the huge tesseract
+		-- ================================================================
+		local HOVER = TSIZE * 1.35
+		local REST = TSIZE * 0.43
+		local restCenter = T + UP * REST
+		local vant = T + toPlayer.Unit * (TSIZE * 1.25) + Vector3.new(0, TSIZE * 0.28, 0)
+		rt.obj = makeTess(tfold, TSIZE)
+		rt.center = T + UP * HOVER
+		rt.on = true
+		local crusher = makeCrusher(T, TSIZE)
+		task.spawn(function() foldData = collectFold(T, f, rootPos) end)
+
+		if useCut then
+			-- camera in the game, looking up at the sky: a VERY HUGE tesseract
+			sfx(SND.whoosh, 2, 0.5, 6)
+			runFor(TS(1.3), function(a, dt, e)
+				camSet(CFrame.lookAt(vant, rt.center), 70)
+				if e < 0.3 then hud.flash.BackgroundTransparency = smooth(e / 0.3) end
+				targetSpeed = 1.5
+			end)
+		else
+			-- the huge tesseract enters a wormhole, teleports outside Earth
+			sfx(SND.whoosh, 2, 0.5, 6)
+			local PWc = rt.center + f * (TSIZE * 1.4)
+			local portal = buildPortal(tfold, PWc, -f, TSIZE * 0.75)
+			runFor(0.9, function(a)
+				portal.update(os.clock(), smooth(a))
+				targetSpeed = 2
+			end)
+			sfx(SND.boom, 2, 0.6, 6)
+			runFor(1.0, function(a)
+				local k = smooth(a)
+				portal.update(os.clock(), 1)
+				rt.center = (T + UP * HOVER):Lerp(PWc, k)
+				rt.size = TSIZE * math.max(1 - k, 0.03)
+				rt.thick = rt.size * 0.02
+			end)
+			rt.on = false
+			rt.obj.folder.Parent = nil
+			runFor(0.45, function(a) portal.update(os.clock(), 1 - smooth(a)) end)
+			portal.destroy()
+			task.wait(0.5)
+			-- ...and comes back from outside Earth, very high up
+			rt.size, rt.thick = TSIZE, TSIZE * 0.02
+			rt.center = T + UP * 5200
+			rt.on = true
+			rt.flash = 2
+			impactFrames()
+			sfx(SND.boom, 2, 0.9, 6)
+		end
+
+		-- turns rainbow, stops spinning
+		local startAlt = rt.center.Y - T.Y
+		runFor(TS(useCut and 1.0 or 0.9), function(a)
+			rt.rainbow = smooth(a)
+			rt.spin = 1 - smooth(a)
+			rt.settle = smooth((a - 0.2) / 0.8)
+			camSet(CFrame.lookAt(vant, rt.center), 70)
+			targetSpeed = 2 + 2 * a
+		end)
+		rt.spin, rt.rainbow, rt.settle = 0, 1, 1
+
+		-- CRASHING DOWN TO EARTH
+		sfx(SND.shot, 3, 0.5, 8)
+		runFor(TS(useCut and 0.9 or 1.1), function(a)
+			local y = startAlt + (REST - startAlt) * (a ^ 2.2)
+			rt.center = T + UP * y
+			crusher(y - REST) -- everything under the falling bottom face gets crushed
+			camSet(CFrame.lookAt(vant, rt.center), 70 + 8 * a)
+			blur(8 * a)
+			targetSpeed = 4
+		end)
+		rt.center = restCenter
+		crusher(-1e9)
+		target.destroy()
+		if CONFIG.CARVE_LAND then
+			pcall(function() workspace.Terrain:FillBlock(CFrame.new(T + UP * 20), Vector3.new(TSIZE * 0.9, 50, TSIZE * 0.9), Enum.Material.Air) end)
+		end
+		ringWaveRainbow(T, 3200, 2.4, 0)
+		ringWaveRainbow(T, 2400, 2.0, 0.25)
+		do
+			local pe2 = part({ Size = Vector3.new(TSIZE * 0.8, 1, TSIZE * 0.8), Position = T + UP * 4, Transparency = 1 }, tfold)
+			sparkEm = Instance.new("ParticleEmitter")
+			sparkEm.Rate = 0
+			sparkEm.Color = RAINBOW
+			sparkEm.LightEmission = 1
+			sparkEm.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 0) })
+			sparkEm.Lifetime = NumberRange.new(1.5, 3)
+			sparkEm.Speed = NumberRange.new(120, 420)
+			sparkEm.SpreadAngle = Vector2.new(70, 70)
+			sparkEm.Acceleration = Vector3.new(0, -120, 0)
+			sparkEm.EmissionDirection = Enum.NormalId.Top
+			sparkEm.Parent = pe2
+			local sm = Instance.new("ParticleEmitter")
+			sm.Rate = 0
+			sm.Texture = "rbxasset://textures/particles/smoke_main.dds"
+			sm.Color = ColorSequence.new(Color3.fromRGB(70, 60, 90))
+			sm.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 60), NumberSequenceKeypoint.new(1, 240) })
+			sm.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1) })
+			sm.Lifetime = NumberRange.new(3, 6)
+			sm.Speed = NumberRange.new(30, 120)
+			sm.SpreadAngle = Vector2.new(60, 60)
+			sm.EmissionDirection = Enum.NormalId.Top
+			sm.Parent = pe2
+			sparkEm:Emit(400)
+			sm:Emit(120)
+		end
+		shakeAmp = 0.06
+		rt.flash = 2
+		impactFrames()
+		bolts(10)
+		sfx(SND.boom, 3, 0.5, 12)
+		sfx(SND.shot, 3, 0.3, 12)
+		blur(0)
+		warp = 0
+		targetSpeed = 1
+
+		-- ================================================================
+		-- ASCENSION x5 - VERY INTENSE: shown 0.5 s, gone 0.5 s, every beat hits harder than the last
+		-- ================================================================
+		extra = { cc = Instance.new("ColorCorrectionEffect"), bloom = Instance.new("BloomEffect"), blur = Instance.new("BlurEffect") }
+		extra.bloom.Intensity = 0.4; extra.bloom.Size = 40; extra.bloom.Threshold = 0.85
+		extra.blur.Size = 0
+		for _, e in pairs(extra) do e.Parent = Lighting end
+		task.wait(TS(0.4))
+
+		local function ascBurst(lv)
+			ringWaveRainbow(T, 1800 + 350 * lv, 1.2, 0)
+			if lv >= 2 then ringWaveRainbow(T, 1300 + 300 * lv, 1.0, 0.12) end
+			bolts(4 + 2 * lv)
+			sparksAt(120 + 80 * lv)
+			impactFrames()
+			sfx(SND.boom, 3, 0.5 + 0.1 * lv, 6)
+			sfx(SND.shot, 2.5, 0.6 + 0.12 * lv, 4)
+			sfx(SND.whoosh, 2, 0.8 + 0.1 * lv, 3)
+		end
+		local vA = vant
+		local vB = restCenter + (vant - restCenter) * 0.7
+		local punch, lastBeat, textT0, shown = 0, -1, 0, false
+		local TOTAL = 5.0
+		local tAsc = os.clock()
+		while true do
+			local dt = RunService.RenderStepped:Wait()
+			local now = os.clock()
+			local e = now - tAsc
+			if e >= TOTAL then break end
+			local beat = math.floor(e)
+			local phase = e - beat
+			if beat ~= lastBeat then
+				lastBeat = beat
+				punch = 1
+				shown = true
+				textT0 = now
+				showBig("ASCENSION", 190)
+				ascBurst(beat + 1)
+			end
+			if shown and phase >= 0.5 then
+				shown = false
+				hideBig()
+				textSplit = 0
+			end
+			punch = punch * math.exp(-dt * 7)
+			local lv = beat + 1
+			if shown then
+				local age = now - textT0
+				local sz = math.floor(190 - 114 * easeOutBack(age / 0.16))
+				for _, t in ipairs({ big, textR, textG, textB }) do t.TextSize = math.max(sz, 20) end
+				textSplit = 26 * (1 - math.clamp(age / 0.4, 0, 1)) * (0.6 + 0.1 * lv)
+				big.Rotation = (math.random() - 0.5) * 8 * punch
+			end
+			-- screen: contrast / saturation / bloom / blur / speed lines all slam on every beat
+			extra.cc.Contrast = 0.9 * punch
+			extra.cc.Saturation = 1.2 * punch
+			extra.cc.TintColor = Color3.fromHSV((now * 3) % 1, 0.35 * punch, 1)
+			extra.bloom.Intensity = 0.4 + 2.4 * punch
+			extra.blur.Size = 22 * punch
+			warp = punch * 0.9
+			-- tesseract: pulses, flashes white
+			rt.flash = math.max(rt.flash, punch * 2.5)
+			rt.size = TSIZE * (1 + 0.06 * punch)
+			rt.thick = rt.size * 0.02
+			rt.center = T + UP * (0.43 * rt.size)
+			-- camera: continuous slow dolly + sway, with punchy FOV zoom, roll and heavy shake on every beat
+			if useCut then
+				local k = smooth(e / TOTAL)
+				local base = vA:Lerp(vB, k)
+				local rel = restCenter + CFrame.Angles(0, math.sin(e * 1.3) * 0.18, 0) * (base - restCenter)
+				cam.CFrame = CFrame.lookAt(rel, restCenter + Vector3.new(0, TSIZE * 0.04 * punch, 0)) * shakeRot(0.006 + punch * (0.03 + 0.008 * lv)) * CFrame.Angles(0, 0, math.sin(now * 55) * 0.04 * punch)
+				cam.FieldOfView = 62 - 18 * punch * (0.5 + 0.1 * lv)
+			end
+		end
+		hideBig()
+		textSplit = 0
+		warp = 0
+		for _, e in pairs(extra) do e:Destroy() end
+		extra = nil
+		rt.size, rt.thick, rt.center = TSIZE, TSIZE * 0.02, restCenter
+
+		-- ================================================================
+		-- FOLDED: half the map flips upside down and goes 200 studs up; the tesseract collapses into a 200-stud stone
+		-- ================================================================
+		extra = { cc = Instance.new("ColorCorrectionEffect"), bloom = Instance.new("BloomEffect"), blur = Instance.new("BlurEffect") }
+		extra.bloom.Intensity = 0.4; extra.bloom.Size = 40; extra.bloom.Threshold = 0.85
+		extra.blur.Size = 0
+		for _, e in pairs(extra) do e.Parent = Lighting end
+		showBig("FOLDED", 200)
+		impactFrames()
+		task.delay(0.15, impactFrames)
+		task.delay(0.3, impactFrames)
+		bolts(24)
+		sparksAt(500)
+		ringWaveRainbow(T, 4200, 2.2, 0)
+		ringWaveRainbow(T, 3200, 1.8, 0.2)
+		sfx(SND.boom, 3, 0.4, 12)
+		sfx(SND.whoosh, 2.5, 0.4, 8)
+		sfx(SND.shot, 3, 0.3, 10)
+		task.spawn(function()
+			while not foldData do task.wait() end
+			if #foldData.parts == 0 then return end
+			foldTween(foldData, 0, 1, 0.9)
+			task.delay(CONFIG.FLIP_STAY, function()
+				local fd = foldData
+				if fd then
+					foldTween(fd, 1, 0, 1.0)
+					if foldData == fd then foldData = nil end
+				end
+			end)
+		end)
+
+		local SHRINK = 1.3
+		local vant2 = T + toPlayer.Unit * 430 + Vector3.new(0, 110, 0)
+		local stoneCenter = T + UP * (STONE / 2)
+		local stoneMade = false
+		local hold = TS(SHRINK + 0.5 + CONFIG.STONE_VIEW)
+		local tF = os.clock()
+		while true do
+			local dt = RunService.RenderStepped:Wait()
+			local now = os.clock()
+			local e = now - tF
+			if e >= hold then break end
+			local punch2 = math.exp(-e * 3.2)
+			-- screen slam that fades out
+			extra.cc.Contrast = 0.9 * punch2
+			extra.cc.Saturation = 1.2 * punch2
+			extra.cc.TintColor = Color3.fromHSV((now * 3) % 1, 0.35 * punch2, 1)
+			extra.bloom.Intensity = 0.4 + 2.4 * punch2
+			extra.blur.Size = 22 * punch2
+			warp = punch2 * 0.9
+			textSplit = 26 * punch2
+			if e > 2.2 then hideBig(); textSplit = 0 end
+			if shown == false and e < 2.2 then
+				local sz = math.floor(200 - 120 * easeOutBack(e / 0.2))
+				for _, t in ipairs({ big, textR, textG, textB }) do t.TextSize = math.max(sz, 20) end
+			end
+			if e < SHRINK then
+				-- the huge tesseract implodes
+				local k = (e / SHRINK) ^ 2
+				rt.size = TSIZE + (STONE - TSIZE) * k
+				rt.thick = rt.size * 0.02
+				rt.center = T + UP * (0.43 * rt.size)
+				rt.flash = math.max(rt.flash, 1.5 * (1 - k))
+				if useCut then
+					local g = smooth(e / SHRINK)
+					cam.CFrame = CFrame.lookAt(vant:Lerp(vant2, g), rt.center) * shakeRot(0.04 * punch2 + 0.004)
+					cam.FieldOfView = 62 - 8 * g
+				end
+			else
+				if not stoneMade then
+					stoneMade = true
+					rt.on = false
+					rt.obj.folder.Parent = nil
+					stone = part({ Size = V(20), CFrame = CFrame.new(stoneCenter), Material = Enum.Material.Granite, Color = Color3.fromRGB(90, 90, 110) }, tfold)
+					stoneGrads = {}
+					for _, face in ipairs(Enum.NormalId:GetEnumItems()) do
+						local sg = Instance.new("SurfaceGui")
+						sg.Face = face
+						sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+						sg.CanvasSize = Vector2.new(256, 256)
+						sg.LightInfluence = 0
+						sg.Brightness = 1.4
+						sg.Parent = stone
+						local fr = Instance.new("Frame")
+						fr.Size = UDim2.fromScale(1, 1)
+						fr.BackgroundColor3 = Color3.new(1, 1, 1)
+						fr.BackgroundTransparency = 0.12
+						fr.BorderSizePixel = 0
+						fr.Parent = sg
+						local g = Instance.new("UIGradient")
+						g.Color = RAINBOW
+						g.Parent = fr
+						stoneGrads[#stoneGrads + 1] = g
+					end
+					local function ball(d, color)
+						local b = part({ Shape = BALLS, Size = V(d), Color = color, Material = NEONM }, tfold)
+						local h = part({ Shape = BALLS, Size = V(d * 2.2), Color = color, Material = NEONM, Transparency = 0.8 }, tfold)
+						local a0 = Instance.new("Attachment"); a0.Position = Vector3.new(0, d / 2, 0); a0.Parent = b
+						local a1 = Instance.new("Attachment"); a1.Position = Vector3.new(0, -d / 2, 0); a1.Parent = b
+						local tr = Instance.new("Trail")
+						tr.Attachment0, tr.Attachment1 = a0, a1
+						tr.Color = ColorSequence.new(color)
+						tr.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1) })
+						tr.Lifetime = 1.4
+						tr.LightEmission = 1
+						tr.FaceCamera = true
+						tr.Parent = b
+						return b, h
+					end
+					local yb, yh = ball(24, Color3.fromRGB(255, 255, 40))   -- neon yellow ball
+					local ib, ih = ball(18, Color3.fromRGB(170, 240, 255))  -- neon ice ball
+					orbit = { center = stoneCenter, R1 = 190, R2 = 160, yb = yb, yh = yh, ib = ib, ih = ih }
+					impactFrames()
+					ringWaveRainbow(T, 900, 1.2, 0)
+					sfx(SND.boom, 2.5, 0.7, 6)
+					shakeAmp = 0.03
+				end
+				stone.Size = V(math.max(20 + (STONE - 20) * smooth((e - SHRINK) / 0.35), 20))
+				if useCut then
+					cam.CFrame = CFrame.lookAt(vant2, stoneCenter) * shakeRot(shakeAmp)
+					cam.FieldOfView = 54
+					shakeAmp = shakeAmp * 0.9
+				end
+			end
+		end
+		hideBig()
+		textSplit = 0
+		warp = 0
+		for _, e in pairs(extra) do e:Destroy() end
+		extra = nil
+
+		-- camera goes back to normal; the stone, the orbiting balls and the folded map stay for a while
+		impactFrames()
+		S.restorePlayer()
+		S.resetFx()
+		hud.bars(false)
+		hud.setLabel("")
+		hud.setSub("")
+		TweenService:Create(hud.flash, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+		task.delay(CONFIG.STONE_STAYS, function()
+			if tfold and tfold.Parent and stone then
+				TweenService:Create(stone, TweenInfo.new(1.2), { Size = V(20) }):Play()
+				rt.on = false
+				task.wait(1.3)
+			end
+			myCleanup()
+		end)
+		task.wait(0.6)
+	end)
+
+	if extra then for _, e in pairs(extra) do pcall(function() e:Destroy() end) end end
+	if not ok then
+		warn("[StellarRemote] " .. tostring(err))
+		if env.__StellarTessCleanup then pcall(env.__StellarTessCleanup) end
+	end
+	S.restoreAll()
+	busy = false
+end
 
 print("[Stellar Remote v5] ready - equip the remote (or tap SR), set CUTSCENE ON/OFF, press SS-01, SS-03, SS-04 or SS-05.")
