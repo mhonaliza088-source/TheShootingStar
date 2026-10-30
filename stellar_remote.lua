@@ -1,12 +1,13 @@
 --[[
-	STELLAR REMOTE v6  ·  SS-01 RAILGUN + SS-03 GUNGNIR + SS-04 THE SHOOTING STAR + SS-05 TESSERACT
+	STELLAR REMOTE v7  ·  SS-01 RAILGUN + SS-03 GUNGNIR + SS-04 THE SHOOTING STAR + SS-05 TESSERACT
 	LocalScript for Delta. 100% client-side: only YOU see anything.
 
-	  1. Execute. You get a "Stellar Remote" tool (+ a small "SR" button on screen).
-	  2. Tap the tool (equip, then tap again) or the SR button -> menu opens.
+	  1. Execute. You get a "Stellar Remote" tool: a real, upright remote with a number pad and a red button.
+	  2. AIM at the spot, then tap the remote (or press R): the world fades to white and a 3D VR menu appears.
+	     Aim the crosshair at a button and tap. Only the red X closes the menu.
 	  3. CUTSCENE: ON  = ~10 s cinematic (Earth > Saturn > Solar System > Milky Way > railgun > impact)
 	     CUTSCENE: OFF = no camera movement, you watch the red beam charge live (~10 s) and then hit.
-	  4. Aim the centre of your screen at the ground and press SS-01, SS-03, SS-04 or SS-05.
+	  4. The spot you aimed at when you opened the menu is the target of the weapon you pick.
 ]]
 
 local Players      = game:GetService("Players")
@@ -152,6 +153,14 @@ end
 ------------------------------------------------------------------------
 -- LIGHTING (space look + restore)
 ------------------------------------------------------------------------
+-- the aim ray: the one captured when the 3D menu was opened (you aim first, then pick), else the screen centre
+local function takeAim(cam, vs)
+	local a = env.__StellarAim
+	env.__StellarAim = nil
+	if a then return a end
+	return cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+end
+
 local LIGHT_PROPS = { "ClockTime", "Brightness", "Ambient", "OutdoorAmbient", "FogEnd", "FogStart", "FogColor", "ExposureCompensation", "GlobalShadows" }
 local SKY_FACES = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp" }
 local L0 = {}
@@ -819,7 +828,7 @@ local function runSS01()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = { char }
 		local vs = cam.ViewportSize
-		local ray = cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+		local ray = takeAim(cam, vs)
 		local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
 		local T, N
 		if res then
@@ -1716,7 +1725,7 @@ local function runSS03()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = { char }
 		local vs = cam.ViewportSize
-		local ray = cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+		local ray = takeAim(cam, vs)
 		local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
 		local T, N
 		if res then
@@ -2362,7 +2371,7 @@ local function runSS04()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = { char }
 		local vs = cam.ViewportSize
-		local ray = cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+		local ray = takeAim(cam, vs)
 		local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
 		local T
 		if res then
@@ -3208,7 +3217,7 @@ local function runSS05()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = { char }
 		local vs = cam.ViewportSize
-		local ray = cam:ViewportPointToRay(vs.X / 2, vs.Y / 2)
+		local ray = takeAim(cam, vs)
 		local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
 		local T
 		if res then
@@ -3553,19 +3562,25 @@ local function runSS05()
 			fx.cc.TintColor = Color3.fromRGB(235, 240, 255)
 			runFor(TS(1.3), function(a)
 				local k = smooth(a)
-				camSet(CFrame.lookAt(pse:Lerp(XCT2, k), XSHOT_S.c:Lerp(XMID, k)), 72 - 6 * k)
+				camSet(CFrame.lookAt(pse:Lerp(XCT2, k), XSHOT_S.c:Lerp(XTC, k)), 72 - 6 * k)
 				warp = 0.6 * (1 - k)
 				glitchAmt = 0.4 * (1 - k)
 			end)
 			warp, glitchAmt = 0, 0
-			-- ===== the VERY HUGE tesseract above the Milky Way, on the white grid =====
-			showBig("T  E  S  S  E  R  A  C  T", 62)
+			-- ===== the camera FACES the VERY HUGE tesseract for 3 seconds before it drops =====
+			local holdPos = XCT2:Lerp(XTC, 0.06)
 			sfx(SND.boom, 1.5, 0.5, 6)
-			runFor(TS(1.5), function(a)
-				camSet(CFrame.lookAt(XCT2, XMID), 66)
-				if a > 0.78 then
-					big.TextTransparency = (a - 0.78) / 0.22
-					for _, t in ipairs({ textR, textG, textB }) do t.TextTransparency = 0.35 + 0.65 * ((a - 0.78) / 0.22) end
+			local textShown = false
+			runFor(3.0, function(a, dt, e)
+				camSet(CFrame.lookAt(XCT2:Lerp(holdPos, smooth(a)), XTC) * rollWobble(a * 0.4), 66) -- very slow push-in
+				if e > 0.4 and not textShown then
+					textShown = true
+					showBig("T  E  S  S  E  R  A  C  T", 62)
+				end
+				if e > 2.3 then
+					local f2 = math.clamp((e - 2.3) / 0.6, 0, 1)
+					big.TextTransparency = f2
+					for _, t in ipairs({ textR, textG, textB }) do t.TextTransparency = 0.35 + 0.65 * f2 end
 				end
 			end)
 			hideBig()
@@ -3575,7 +3590,7 @@ local function runSS05()
 			runFor(TS(1.5), function(a)
 				xs.center = XTC:Lerp(XGAL, a ^ 2)
 				xs.size = XSZ * (1 - smooth((a - 0.86) / 0.14) * 0.97)
-				camSet(CFrame.lookAt(XCT2:Lerp(XCAM_F, smooth(a)), xs.center), 70)
+				camSet(CFrame.lookAt(holdPos:Lerp(XCAM_F, smooth(a)), xs.center), 70)
 				blur(8 * a)
 				warp = 0.35 * a
 				if a > 0.78 and not portal then portal = buildPortal(stage.farF, XGAL + Vector3.new(0, 40, 0), UP, 5200) end
@@ -3644,34 +3659,36 @@ local function runSS05()
 				targetSpeed = 1.5
 			end)
 		else
-			-- the huge tesseract enters a wormhole, teleports outside Earth
+			-- OFF: a wormhole opens in the sky, the tesseract comes OUT of it, hangs there ~2 s, then crashes down
+			rt.on = false
+			rt.obj.folder.Parent = nil
 			sfx(SND.whoosh, 2, 0.5, 6)
-			local PWc = rt.center + f * (TSIZE * 1.4)
-			local portal = buildPortal(tfold, PWc, -f, TSIZE * 0.75)
+			local HC = T + UP * HOVER
+			local PWc = HC + f * (TSIZE * 1.15)
+			local portal = buildPortal(tfold, PWc, -f, TSIZE * 0.7)
 			runFor(0.9, function(a)
 				portal.update(os.clock(), smooth(a))
 				targetSpeed = 2
 			end)
 			sfx(SND.boom, 2, 0.6, 6)
-			runFor(1.0, function(a)
-				local k = smooth(a)
-				portal.update(os.clock(), 1)
-				rt.center = (T + UP * HOVER):Lerp(PWc, k)
-				rt.size = TSIZE * math.max(1 - k, 0.03)
-				rt.thick = rt.size * 0.02
-			end)
-			rt.on = false
-			rt.obj.folder.Parent = nil
-			runFor(0.45, function(a) portal.update(os.clock(), 1 - smooth(a)) end)
-			portal.destroy()
-			task.wait(0.5)
-			-- ...and comes back from outside Earth, very high up
-			rt.size, rt.thick = TSIZE, TSIZE * 0.02
-			rt.center = T + UP * 5200
+			rt.size, rt.thick = TSIZE * 0.04, TSIZE * 0.0008
+			rt.center = PWc
 			rt.on = true
 			rt.flash = 2
 			impactFrames()
-			sfx(SND.boom, 2, 0.9, 6)
+			runFor(1.3, function(a)
+				local k = smooth(a)
+				portal.update(os.clock(), 1)
+				rt.center = PWc:Lerp(HC, k)
+				rt.size = TSIZE * (0.04 + 0.96 * k)
+				rt.thick = rt.size * 0.02
+			end)
+			rt.size, rt.thick, rt.center = TSIZE, TSIZE * 0.02, HC
+			runFor(2.0, function(a, dt, e) -- the wormhole closes while the tesseract waits there
+				portal.update(os.clock(), 1 - smooth(e / 0.5))
+				targetSpeed = 2
+			end)
+			portal.destroy()
 		end
 
 		-- turns rainbow, stops spinning
@@ -3981,125 +3998,34 @@ local function runSS05()
 end
 
 ------------------------------------------------------------------------
--- MENU (opens when you click/tap the remote)
+-- THE REMOTE + 3D VR MENU
+-- The remote is held perfectly upright. Tap it and the world fades to white: you stand in a white void with
+-- floating 3D panels. Aim the crosshair at a button and tap. Only the red X closes it.
 ------------------------------------------------------------------------
-local function buildMenu()
-	local g = Instance.new("ScreenGui")
-	g.Name = "StellarRemoteUI"
-	g.ResetOnSpawn = false
-	g.DisplayOrder = 500
-	g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+local UserInputService = game:GetService("UserInputService")
 
-	local m = {}
-
-	local frame = Instance.new("Frame")
-	frame.AnchorPoint = Vector2.new(0.5, 0.5)
-	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
-	frame.Size = UDim2.fromOffset(300, 436)
-	frame.BackgroundColor3 = Color3.fromRGB(12, 14, 22)
-	frame.BackgroundTransparency = 0.04
-	frame.BorderSizePixel = 0
-	frame.Visible = false
-	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 12); corner.Parent = frame
-	local stroke = Instance.new("UIStroke"); stroke.Color = Color3.fromRGB(255, 50, 50); stroke.Thickness = 1.6
-	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; stroke.Parent = frame
-	local scale = Instance.new("UIScale")
-	scale.Scale = math.clamp(getCam().ViewportSize.Y / 700, 0.8, 1.25)
-	scale.Parent = frame
-	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 14); pad.PaddingBottom = UDim.new(0, 14)
-	pad.PaddingLeft = UDim.new(0, 14); pad.PaddingRight = UDim.new(0, 14)
-	pad.Parent = frame
-	local list = Instance.new("UIListLayout")
-	list.Padding = UDim.new(0, 8); list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	list.Parent = frame
-
-	local function label(text, size, color, order, h)
-		local t = Instance.new("TextLabel")
-		t.BackgroundTransparency = 1; t.Font = Enum.Font.Code; t.Text = text; t.TextSize = size
-		t.TextColor3 = color; t.Size = UDim2.new(1, 0, 0, h); t.LayoutOrder = order
-		t.Parent = frame
-		return t
+-- rounded rectangle slab made of 2 boxes + 4 cylinders (front face = local -Z)
+local function roundRect(parent, cf, w, h, t, r, props)
+	local out = {}
+	local function mk(extra)
+		local d = {}
+		for k, v in pairs(props or {}) do d[k] = v end
+		for k, v in pairs(extra) do d[k] = v end
+		local p = part(d, parent)
+		out[#out + 1] = p
+		return p
 	end
-	local function button(text, order, active, h)
-		local b = Instance.new("TextButton")
-		b.AutoButtonColor = active
-		b.Font = Enum.Font.Code; b.Text = text; b.TextSize = 20; b.TextColor3 = Color3.new(1, 1, 1)
-		b.Size = UDim2.new(1, 0, 0, h or 54); b.LayoutOrder = order
-		b.BackgroundColor3 = active and Color3.fromRGB(120, 10, 20) or Color3.fromRGB(30, 32, 42)
-		local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = b
-		local s = Instance.new("UIStroke"); s.Color = active and Color3.fromRGB(255, 70, 70) or Color3.fromRGB(70, 74, 90)
-		s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Thickness = 1.2; s.Parent = b
-		if not active then b.TextColor3 = Color3.fromRGB(120, 124, 140) end
-		b.Parent = frame
-		return b, s
+	mk({ Size = Vector3.new(math.max(w - 2 * r, 0.05), h, t), CFrame = cf })
+	mk({ Size = Vector3.new(w, math.max(h - 2 * r, 0.05), t), CFrame = cf })
+	for _, sx in ipairs({ -1, 1 }) do
+		for _, sy in ipairs({ -1, 1 }) do
+			mk({ Shape = CYLS, Size = Vector3.new(t, 2 * r, 2 * r), CFrame = cf * CFrame.new(sx * (w / 2 - r), sy * (h / 2 - r), 0) * CFrame.Angles(0, math.rad(90), 0) })
+		end
 	end
-
-	label("STELLAR REMOTE", 24, Color3.new(1, 1, 1), 1, 30)
-	label("THE SHOOTING STAR", 13, Color3.fromRGB(255, 110, 110), 2, 16)
-	local ss01 = button("SS-01  ·  RAILGUN", 3, true)
-	local ss03, ss03Stroke = button("SS-03  ·  GUNGNIR", 4, true)
-	ss03.BackgroundColor3 = Color3.fromRGB(150, 72, 8)
-	ss03Stroke.Color = Color3.fromRGB(255, 165, 45)
-	local cutBtn, cutStroke = button("", 5, true, 44)
-	local ss04, ss04Stroke = button("SS-04  ·  THE SHOOTING STAR", 6, true)
-	ss04.TextSize = 17
-	ss04.BackgroundColor3 = Color3.fromRGB(78, 28, 140)
-	ss04Stroke.Color = Color3.fromRGB(190, 120, 255)
-	local ss05, ss05Stroke = button("SS-05  ·  TESSERACT", 7, true)
-	ss05.BackgroundColor3 = Color3.fromRGB(40, 24, 70)
-	local ss05Grad = Instance.new("UIGradient")
-	ss05Grad.Color = RAINBOW
-	ss05Grad.Parent = ss05Stroke
-	local close = Instance.new("TextButton")
-	close.Font = Enum.Font.Code; close.Text = "CLOSE"; close.TextSize = 16
-	close.TextColor3 = Color3.fromRGB(200, 204, 220); close.BackgroundTransparency = 1
-	close.Size = UDim2.new(1, 0, 0, 30); close.LayoutOrder = 8; close.Parent = frame
-
-	local function refreshCut()
-		local on = env.__StellarCutsceneOn ~= false
-		cutBtn.Text = on and "CUTSCENE:  ON" or "CUTSCENE:  OFF"
-		cutBtn.BackgroundColor3 = on and Color3.fromRGB(14, 90, 48) or Color3.fromRGB(58, 60, 74)
-		cutStroke.Color = on and Color3.fromRGB(60, 220, 120) or Color3.fromRGB(120, 124, 140)
-	end
-	refreshCut()
-
-	frame.Parent = g
-
-	-- small always-available button (in case the game hides the hotbar)
-	local fab = Instance.new("TextButton")
-	fab.Size = UDim2.fromOffset(46, 46)
-	fab.Position = UDim2.new(1, -60, 0.38, 0)
-	fab.BackgroundColor3 = Color3.fromRGB(120, 10, 20)
-	fab.Font = Enum.Font.Code; fab.Text = "SR"; fab.TextSize = 18; fab.TextColor3 = Color3.new(1, 1, 1)
-	local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(1, 0); fc.Parent = fab
-	local fs = Instance.new("UIStroke"); fs.Color = Color3.fromRGB(255, 70, 70); fs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; fs.Parent = fab
-	fab.Parent = g
-
-	function m.open() frame.Visible = true end
-	function m.close() frame.Visible = false end
-	function m.toggle() frame.Visible = not frame.Visible end
-
-	conns[#conns + 1] = ss01.Activated:Connect(function() task.spawn(runSS01) end)
-	conns[#conns + 1] = ss03.Activated:Connect(function() task.spawn(runSS03) end)
-	conns[#conns + 1] = ss04.Activated:Connect(function() task.spawn(runSS04) end)
-	conns[#conns + 1] = ss05.Activated:Connect(function() task.spawn(runSS05) end)
-	conns[#conns + 1] = cutBtn.Activated:Connect(function()
-		env.__StellarCutsceneOn = not (env.__StellarCutsceneOn ~= false)
-		refreshCut()
-	end)
-	conns[#conns + 1] = close.Activated:Connect(m.close)
-	conns[#conns + 1] = fab.Activated:Connect(m.toggle)
-
-	protect(g)
-	m.gui = g
-	return m
+	return out
 end
 
-------------------------------------------------------------------------
--- THE REMOTE (Tool)
-------------------------------------------------------------------------
+-- ---------------------------------------------------------------- the remote (realistic, upright, keypad + red button)
 local function buildTool()
 	local t = Instance.new("Tool")
 	t.Name = "Stellar Remote"
@@ -4107,33 +4033,132 @@ local function buildTool()
 	t.CanBeDropped = false
 	t.RequiresHandle = true
 
-	local function bp(name, size, color, mat, shape, transp)
+	local function bp(name, size, color, mat, shape, transp, refl)
 		local p = Instance.new("Part")
-		p.Name = name; p.Size = size; p.Color = color; p.Material = mat or Enum.Material.SmoothPlastic
-		p.CanCollide = false; p.Massless = true
-		p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+		p.Name = name
 		if shape then p.Shape = shape end
+		p.Size = size
+		p.Color = color
+		p.Material = mat or Enum.Material.SmoothPlastic
+		p.CanCollide = false
+		p.Massless = true
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
 		if transp then p.Transparency = transp end
+		if refl then p.Reflectance = refl end
 		return p
 	end
-	local handle = bp("Handle", Vector3.new(0.7, 0.26, 1.9), Color3.fromRGB(24, 26, 34))
+	local handle = bp("Handle", Vector3.new(0.5, 0.5, 0.5), Color3.new(0, 0, 0), nil, nil, 1)
 	handle.Parent = t
+	local rootP = bp("RemoteRoot", Vector3.new(0.2, 0.2, 0.2), Color3.new(0, 0, 0), nil, nil, 1)
+	local dyn = Instance.new("Weld")
+	dyn.Part0, dyn.Part1, dyn.C0 = handle, rootP, CFrame.new(0, 0.65, 0)
+	dyn.Parent = rootP
+	rootP.Parent = t
 	local function attach(p, cf)
 		local w = Instance.new("Weld")
-		w.Part0 = handle; w.Part1 = p; w.C0 = cf
+		w.Part0, w.Part1, w.C0 = rootP, p, cf
 		w.Parent = p
 		p.Parent = t
+		return p
 	end
-	for r = 0, 2 do -- keypad
-		for c = -1, 1 do
-			attach(bp("Key", Vector3.new(0.14, 0.04, 0.14), Color3.fromRGB(90, 94, 108)), CFrame.new(c * 0.2, 0.15, 0.1 + r * 0.28))
-		end
+	local function label(p, face, text, size, color, font, canvas)
+		local sg = Instance.new("SurfaceGui")
+		sg.Face = face
+		sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+		sg.CanvasSize = canvas or Vector2.new(64, 64)
+		sg.LightInfluence = 0
+		sg.Brightness = 1.3
+		sg.Parent = p
+		local tl = Instance.new("TextLabel")
+		tl.BackgroundTransparency = 1
+		tl.Size = UDim2.fromScale(1, 1)
+		tl.Font = font or Enum.Font.GothamBold
+		tl.Text = text
+		tl.TextColor3 = color or Color3.new(1, 1, 1)
+		tl.TextSize = size or 40
+		tl.Parent = sg
+		return tl
 	end
-	attach(bp("Cover", Vector3.new(0.6, 0.07, 0.5), Color3.fromRGB(150, 160, 180), Enum.Material.Glass, nil, 0.5), CFrame.new(0, 0.21, -0.6))
-	attach(bp("RedButton", Vector3.new(0.06, 0.22, 0.22), Color3.fromRGB(255, 30, 30), Enum.Material.Neon, Enum.PartType.Cylinder), CFrame.new(0, 0.16, -0.6) * CFrame.Angles(0, 0, math.rad(90)))
-	attach(bp("Led", Vector3.new(0.06, 0.06, 0.06), Color3.fromRGB(255, 40, 40), Enum.Material.Neon, Enum.PartType.Ball), CFrame.new(0, 0.16, -0.88))
 
-	conns[#conns + 1] = t.Activated:Connect(function() if menu then menu.toggle() end end)
+	local SC = 1.15
+	local function V3(x, y, z) return Vector3.new(x * SC, y * SC, z * SC) end
+	local function CF(x, y, z) return CFrame.new(x * SC, y * SC, z * SC) end
+	local ZROT = CFrame.Angles(0, math.rad(90), 0) -- cylinders: axis along local Z
+	local CARBON, DARKM, LIGHTM = Color3.fromRGB(20, 22, 28), Color3.fromRGB(14, 15, 19), Color3.fromRGB(96, 100, 110)
+	local CYAN = Color3.fromRGB(70, 210, 255)
+	local METAL, NEON, PLASTIC = Enum.Material.Metal, Enum.Material.Neon, Enum.Material.SmoothPlastic
+
+	-- body: carbon shell with rounded ends, metal rails, front bezel, back plate
+	attach(bp("Body", V3(0.74, 1.7, 0.32), CARBON, PLASTIC, nil, nil, 0.05), CF(0, 0, 0))
+	attach(bp("CapTop", V3(0.32, 0.74, 0.74), CARBON, PLASTIC, CYLS, nil, 0.05), CF(0, 0.85, 0) * ZROT)
+	attach(bp("CapBottom", V3(0.32, 0.74, 0.74), CARBON, PLASTIC, CYLS, nil, 0.05), CF(0, -0.85, 0) * ZROT)
+	attach(bp("Bezel", V3(0.62, 2.0, 0.04), DARKM, METAL), CF(0, 0, -0.17))
+	attach(bp("Back", V3(0.6, 1.7, 0.03), LIGHTM, METAL), CF(0, 0, 0.175))
+	for _, sx in ipairs({ -1, 1 }) do
+		attach(bp("Rail", V3(0.05, 1.78, 0.34), LIGHTM, METAL), CF(sx * 0.385, 0, 0))
+		attach(bp("Strip", V3(0.02, 1.62, 0.02), CYAN, NEON), CF(sx * 0.31, 0, -0.195))
+	end
+
+	-- LCD with numbers
+	local lcd = attach(bp("LCD", V3(0.5, 0.28, 0.03), Color3.fromRGB(4, 10, 14), PLASTIC), CF(0, 0.68, -0.19))
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Front
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	sg.CanvasSize = Vector2.new(200, 112)
+	sg.LightInfluence = 0
+	sg.Brightness = 1.4
+	sg.Parent = lcd
+	local l1 = Instance.new("TextLabel")
+	l1.BackgroundTransparency = 1; l1.Position = UDim2.new(0, 0, 0.04, 0); l1.Size = UDim2.new(1, 0, 0.3, 0)
+	l1.Font = Enum.Font.Code; l1.Text = "STELLAR · SS"; l1.TextSize = 20; l1.TextColor3 = CYAN; l1.Parent = sg
+	local lcdNum = Instance.new("TextLabel")
+	lcdNum.BackgroundTransparency = 1; lcdNum.Position = UDim2.new(0, 0, 0.32, 0); lcdNum.Size = UDim2.new(1, 0, 0.6, 0)
+	lcdNum.Font = Enum.Font.Code; lcdNum.Text = "0000"; lcdNum.TextSize = 56; lcdNum.TextColor3 = Color3.fromRGB(120, 255, 170); lcdNum.Parent = sg
+
+	-- the red button: metal bezel, glowing cap, glint
+	attach(bp("Bezel2", V3(0.05, 0.36, 0.36), DARKM, METAL, CYLS), CF(0, 0.3, -0.2) * ZROT)
+	local redCap = attach(bp("RedButton", V3(0.1, 0.27, 0.27), Color3.fromRGB(255, 30, 30), NEON, CYLS), CF(0, 0.3, -0.245) * ZROT)
+	attach(bp("Glint", V3(0.09, 0.09, 0.09), Color3.fromRGB(255, 170, 170), NEON, Enum.PartType.Ball, 0.45), CF(-0.05, 0.36, -0.3))
+	-- status LEDs
+	for i, col in ipairs({ CYAN, Color3.fromRGB(255, 220, 60), Color3.fromRGB(80, 255, 120) }) do
+		attach(bp("Led", V3(0.05, 0.05, 0.05), col, NEON, Enum.PartType.Ball), CF((i - 2) * 0.13, 0.05, -0.2))
+	end
+	-- numbered keypad
+	local digits = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#" }
+	for n, d in ipairs(digits) do
+		local row, col = math.floor((n - 1) / 3), (n - 1) % 3
+		local key = attach(bp("Key" .. d, V3(0.15, 0.15, 0.045), Color3.fromRGB(46, 50, 60), PLASTIC), CF((col - 1) * 0.2, -0.14 - row * 0.2, -0.2))
+		label(key, Enum.NormalId.Front, d, 40, Color3.new(1, 1, 1))
+	end
+	-- IR emitter on top
+	attach(bp("Emitter", V3(0.3, 0.08, 0.18), DARKM, METAL), CF(0, 1.2, -0.02))
+	attach(bp("EmitterDot", V3(0.06, 0.06, 0.06), Color3.fromRGB(255, 50, 50), NEON, Enum.PartType.Ball), CF(0, 1.23, -0.1))
+
+	-- stays perfectly upright in the hand and always shows its face to the camera
+	local conn
+	t.Equipped:Connect(function()
+		if conn then conn:Disconnect() end
+		conn = RunService.RenderStepped:Connect(function()
+			local cam = workspace.CurrentCamera
+			local hp = handle.Position
+			local toCam = Vector3.new(cam.CFrame.Position.X - hp.X, 0, cam.CFrame.Position.Z - hp.Z)
+			if toCam.Magnitude < 0.1 then toCam = Vector3.new(0, 0, 1) end
+			local back = -toCam.Unit
+			local want = CFrame.fromMatrix(hp + Vector3.new(0, 0.65, 0), UP:Cross(back), UP, back)
+			dyn.C0 = handle.CFrame:ToObjectSpace(want)
+			local k = 0.5 + 0.5 * math.sin(os.clock() * 5)
+			redCap.Color = Color3.fromRGB(255, math.floor(25 + 55 * k), math.floor(25 + 30 * k))
+			if os.clock() % 0.4 < 0.03 then lcdNum.Text = string.format("%04d", math.random(0, 9999)) end
+		end)
+	end)
+	local function stop() if conn then conn:Disconnect(); conn = nil end end
+	t.Unequipped:Connect(stop)
+	t.Destroying:Connect(stop)
+
+	conns[#conns + 1] = t.Activated:Connect(function()
+		if menu and not menu.isOpen and not menu.moving and not busy then menu.open() end
+	end)
 	return t
 end
 
@@ -4146,10 +4171,424 @@ local function giveTool()
 	track(tool)
 end
 
+-- ---------------------------------------------------------------- the white void
+local function buildRoom(parent, center, floorY)
+	local H, W, TH = 70, 90, 4
+	local WHITE = Color3.new(1, 1, 1)
+	local cx, cz = center.X, center.Z
+	local function slab(size, pos) part({ Size = size, Position = pos, Color = WHITE, Material = NEONM }, parent) end
+	slab(Vector3.new(2 * W + 2 * TH, TH, 2 * W + 2 * TH), Vector3.new(cx, floorY + 0.06 - TH / 2, cz))
+	slab(Vector3.new(2 * W + 2 * TH, TH, 2 * W + 2 * TH), Vector3.new(cx, floorY + H + TH / 2, cz))
+	slab(Vector3.new(TH, H, 2 * W + 2 * TH), Vector3.new(cx + W + TH / 2, floorY + H / 2, cz))
+	slab(Vector3.new(TH, H, 2 * W + 2 * TH), Vector3.new(cx - W - TH / 2, floorY + H / 2, cz))
+	slab(Vector3.new(2 * W + 2 * TH, H, TH), Vector3.new(cx, floorY + H / 2, cz + W + TH / 2))
+	slab(Vector3.new(2 * W + 2 * TH, H, TH), Vector3.new(cx, floorY + H / 2, cz - W - TH / 2))
+	local grid = Color3.fromRGB(206, 214, 230) -- faint VR floor grid + rings
+	for i = -9, 9 do
+		part({ Size = Vector3.new(2 * W, 0.05, 0.25), Position = Vector3.new(cx, floorY + 0.1, cz + i * 10), Color = grid, Material = NEONM }, parent)
+		part({ Size = Vector3.new(0.25, 0.05, 2 * W), Position = Vector3.new(cx + i * 10, floorY + 0.1, cz), Color = grid, Material = NEONM }, parent)
+	end
+	for _, R in ipairs({ 8, 18, 30 }) do
+		local segs = 64
+		local arc = 2 * math.pi * R / segs * 1.1
+		for i = 1, segs do
+			local a = (i / segs) * math.pi * 2
+			part({ Size = Vector3.new(0.35, 0.05, arc), CFrame = CFrame.new(cx + math.cos(a) * R, floorY + 0.11, cz + math.sin(a) * R) * CFrame.Angles(0, -a, 0), Color = grid, Material = NEONM }, parent)
+		end
+	end
+end
+
+-- hides everything around you (client-side) so only the white void is left
+local function hideSurroundings(center, folder)
+	local list = {}
+	local op = OverlapParams.new()
+	op.FilterType = Enum.RaycastFilterType.Exclude
+	op.FilterDescendantsInstances = player.Character and { player.Character } or {}
+	for _, p in ipairs(workspace:GetPartBoundsInRadius(center, 170, op)) do
+		if p ~= workspace.Terrain and not p:IsDescendantOf(folder) then
+			local v = p.LocalTransparencyModifier
+			if v < 1 then
+				list[#list + 1] = { p, v }
+				p.LocalTransparencyModifier = 1
+			end
+		end
+	end
+	return list
+end
+
+-- ---------------------------------------------------------------- the crosshair (a 3D gaze reticle)
+local function makeReticle(parent)
+	local R = { ringParts = {} }
+	local function newRing(rad, width, segs, arcsOnly, hidden)
+		local m = Instance.new("Model")
+		local ps = {}
+		for i = 1, segs do
+			local a = (i / segs) * math.pi * 2
+			local deg = math.deg(a) % 90
+			if (not arcsOnly) or (deg > 17 and deg < 73) then
+				ps[#ps + 1] = part({ Size = Vector3.new(width, 2 * math.pi * rad / segs * 1.18, 0.04), CFrame = CFrame.new(math.cos(a) * rad, math.sin(a) * rad, 0) * CFrame.Angles(0, 0, a), Material = NEONM, Color = Color3.new(1, 1, 1), Transparency = hidden and 1 or 0 }, m)
+			end
+		end
+		m.WorldPivot = CFrame.new()
+		return m, ps
+	end
+	R.outer, R.outerParts = newRing(0.95, 0.07, 48, true, false)
+	R.inner, R.innerParts = newRing(0.55, 0.045, 28, false, false)
+	R.lock, R.lockParts = newRing(0.85, 0.09, 36, false, true)
+	for k = 0, 3 do -- N / E / S / W ticks on the outer ring
+		local a = k * math.pi / 2
+		R.outerParts[#R.outerParts + 1] = part({ Size = Vector3.new(0.3, 0.07, 0.04), CFrame = CFrame.new(math.cos(a) * 1.3, math.sin(a) * 1.3, 0) * CFrame.Angles(0, 0, a), Material = NEONM, Color = Color3.new(1, 1, 1) }, R.outer)
+	end
+	R.dot = part({ Shape = BALLS, Size = V(0.16), Material = NEONM, Color = Color3.new(1, 1, 1) }, parent)
+	for _, m in ipairs({ R.outer, R.inner, R.lock }) do
+		m.Parent = parent
+		m:PivotTo(CFrame.new(0, -5000, 0))
+	end
+	R.pulse = 0
+	R.lastCol = nil
+	function R.burst() R.pulse = 1 end
+	function R.update(p, camPos, dist, hv, col, now, dt)
+		local s = math.clamp(dist * 0.055, 0.5, 3)
+		local pp = p + (camPos - p).Unit * 0.3
+		local face = CFrame.lookAt(pp, camPos)
+		R.pulse = R.pulse * math.exp(-dt * 7)
+		R.outer:ScaleTo(math.max(s * (1 - 0.2 * hv + 0.25 * R.pulse), 0.01))
+		R.outer:PivotTo(face * CFrame.Angles(0, 0, now * (0.8 + 2.4 * hv)))
+		R.inner:ScaleTo(math.max(s * (1 - 0.12 * hv), 0.01))
+		R.inner:PivotTo(face * CFrame.Angles(0, 0, -now * (1.2 + 1.6 * hv)))
+		R.lock:ScaleTo(math.max(s * (0.7 + 0.5 * hv + 0.7 * R.pulse), 0.01))
+		R.lock:PivotTo(face)
+		local lt = 1 - 0.85 * math.max(hv * 0.8, R.pulse)
+		for _, q in ipairs(R.lockParts) do q.Transparency = lt end
+		R.dot.Size = V(0.16 * s)
+		R.dot.CFrame = CFrame.new(pp)
+		local c = col:Lerp(Color3.new(1, 1, 1), 0.25 * R.pulse)
+		if c ~= R.lastCol then
+			R.lastCol = c
+			for _, q in ipairs(R.outerParts) do q.Color = c end
+			for _, q in ipairs(R.innerParts) do q.Color = c end
+			for _, q in ipairs(R.lockParts) do q.Color = c end
+			R.dot.Color = Color3.new(1, 1, 1):Lerp(c, 0.4)
+		end
+	end
+	return R
+end
+
+-- ---------------------------------------------------------------- the 3D VR menu
+local function build3DMenu()
+	local M = { isOpen = false, moving = false, gui = Instance.new("Folder") }
+	local st = nil
+
+	local function teardown()
+		pcall(function() RunService:UnbindFromRenderStep("StellarMenu3D") end)
+		if st then
+			for _, rec in ipairs(st.hidden or {}) do
+				if rec[1].Parent then rec[1].LocalTransparencyModifier = rec[2] end
+			end
+			if st.folder then st.folder:Destroy() end
+			st = nil
+			setControls(true)
+		end
+		M.isOpen = false
+	end
+	env.__StellarMenuDestroy = teardown
+
+	local SPECS = {
+		{ id = "railgun", badge = "01", title = "RAILGUN", sub = "SS-01  ·  ORBITAL LASER", accent = Color3.fromRGB(60, 200, 255), run = function() task.spawn(runSS01) end },
+		{ id = "gungnir", badge = "02", title = "GUNGNIR", sub = "SS-03  ·  THE SPEAR", accent = Color3.fromRGB(255, 140, 30), run = function() task.spawn(runSS03) end },
+		{ id = "stars", badge = "03", title = "THE 7 STARS", sub = "SS-04  ·  SHOOTING STAR", accent = Color3.fromRGB(190, 110, 255), run = function() task.spawn(runSS04) end },
+		{ id = "tess", badge = "04", title = "TESSERACT", sub = "SS-05  ·  FOLD THE WORLD", rainbow = true, accent = Color3.fromRGB(255, 80, 200), run = function() task.spawn(runSS05) end },
+	}
+	local GREEN, RED = Color3.fromRGB(70, 255, 130), Color3.fromRGB(255, 60, 70)
+
+	local function accentOf(b, now)
+		if b.kind == "toggle" then return (env.__StellarCutsceneOn ~= false) and GREEN or RED end
+		if b.spec and b.spec.rainbow then return Color3.fromHSV((now * 0.25) % 1, 0.85, 1) end
+		return (b.spec and b.spec.accent) or RED
+	end
+
+	local function refreshToggle(b)
+		local on = env.__StellarCutsceneOn ~= false
+		b.stateLabel.Text = on and "ON" or "OFF"
+		b.stateLabel.TextColor3 = on and GREEN or RED
+		b.knobOn.Transparency = on and 0 or 1
+		b.knobOff.Transparency = on and 1 or 0
+	end
+
+	-- builds the whole menu around the camera's view
+	local function buildPanels(folder, cam, floorY)
+		local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+		if flat.Magnitude < 0.1 then flat = Vector3.new(0, 0, -1) end
+		flat = flat.Unit
+		local P = cam.CFrame.Position + flat * 26 + Vector3.new(0, -1.5, 0)
+		P = Vector3.new(P.X, math.max(P.Y, floorY + 11), P.Z)
+		local menuCF = CFrame.lookAt(P, P - flat) -- front face (-Z) looks at you
+		local function at(xv, yv, zv) return menuCF * CFrame.new(-xv, yv, zv or 0) end
+
+		-- backing panel + glowing outline
+		roundRect(folder, at(0, 0, 1.6), 36.6, 24.8, 0.6, 2.6, { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(14, 18, 30), Reflectance = 0.1 })
+		st.rim = roundRect(folder, at(0, 0, 2.1), 37.6, 25.8, 0.4, 3.0, { Material = NEONM, Color = Color3.fromRGB(70, 210, 255) })
+		local tface = part({ Size = Vector3.new(26, 4.4, 0.05), CFrame = at(0, 9.6, 0.9), Transparency = 1 }, folder)
+		local tsg = Instance.new("SurfaceGui")
+		tsg.Face = Enum.NormalId.Front
+		tsg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		tsg.PixelsPerStud = 50
+		tsg.LightInfluence = 0
+		tsg.Brightness = 1.3
+		tsg.Parent = tface
+		local function tlabel(text, font, size, color, pos, sz)
+			local t = Instance.new("TextLabel")
+			t.BackgroundTransparency = 1; t.Text = text; t.Font = font; t.TextSize = size; t.TextColor3 = color
+			t.Position = pos; t.Size = sz; t.Parent = tsg
+			return t
+		end
+		tlabel("STELLAR REMOTE", Enum.Font.GothamBlack, 86, Color3.new(1, 1, 1), UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 0.66, 0))
+		tlabel("AIM THE CROSSHAIR  ·  TAP TO SELECT", Enum.Font.Code, 28, Color3.fromRGB(120, 170, 230), UDim2.new(0, 0, 0.68, 0), UDim2.new(1, 0, 0.3, 0))
+
+		local function addButton(kind, spec, xv, yv, w, h)
+			local m = Instance.new("Model")
+			m.Name = "Btn_" .. kind
+			local rest = at(xv, yv, 0)
+			local function bx(x, y, z) return rest * CFrame.new(-x, y, z) end
+			local b = { kind = kind, spec = spec, model = m, rest = rest, hv = 0, press = 0, acc = {}, i = #st.buttons + 1 }
+			local function addAcc(list) for _, p in ipairs(list) do b.acc[#b.acc + 1] = p end end
+			local function faceGui(fw, fh, z)
+				local face = part({ Size = Vector3.new(fw, fh, 0.05), CFrame = bx(0, 0, z), Transparency = 1 }, m)
+				local sg = Instance.new("SurfaceGui")
+				sg.Face = Enum.NormalId.Front
+				sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+				sg.PixelsPerStud = 50
+				sg.LightInfluence = 0
+				sg.Brightness = 1.3
+				sg.Parent = face
+				return sg
+			end
+			local function tl(sg, text, font, size, color, pos, sz, xa)
+				local t = Instance.new("TextLabel")
+				t.BackgroundTransparency = 1; t.Text = text; t.Font = font; t.TextSize = size; t.TextColor3 = color
+				t.Position = pos; t.Size = sz; t.TextXAlignment = xa or Enum.TextXAlignment.Left
+				t.Parent = sg
+				return t
+			end
+			if kind == "ability" then
+				addAcc(roundRect(m, bx(0, 0, 0.35), w + 0.8, h + 0.8, 0.5, 1.5, { Material = NEONM, Color = spec.accent }))
+				roundRect(m, rest, w, h, 0.9, 1.2, { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(22, 28, 46), Reflectance = 0.08 })
+				roundRect(m, bx(0, 0, -0.5), w - 0.9, h - 0.9, 0.2, 1.0, { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(34, 42, 66) })
+				b.acc[#b.acc + 1] = part({ Shape = CYLS, Size = Vector3.new(0.3, 3.8, 3.8), CFrame = bx(-(w / 2 - 2.6), 0, -0.7) * CFrame.Angles(0, math.rad(90), 0), Material = NEONM, Color = spec.accent }, m)
+				local sg = faceGui(w, h, -0.9)
+				tl(sg, spec.badge, Enum.Font.GothamBlack, 78, Color3.fromRGB(8, 12, 24), UDim2.new(0.069, 0, 0.1, 0), UDim2.new(0.2, 0, 0.8, 0), Enum.TextXAlignment.Center)
+				tl(sg, spec.title, Enum.Font.GothamBlack, 60, Color3.new(1, 1, 1), UDim2.new(0.28, 0, 0.14, 0), UDim2.new(0.68, 0, 0.45, 0))
+				tl(sg, spec.sub, Enum.Font.Code, 26, Color3.fromRGB(150, 170, 210), UDim2.new(0.28, 0, 0.6, 0), UDim2.new(0.68, 0, 0.28, 0))
+			elseif kind == "toggle" then
+				addAcc(roundRect(m, bx(0, 0, 0.35), w + 0.8, h + 0.8, 0.5, 1.4, { Material = NEONM, Color = GREEN }))
+				roundRect(m, rest, w, h, 0.9, 1.2, { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(22, 28, 46), Reflectance = 0.08 })
+				roundRect(m, bx(0, 0, -0.5), w - 0.9, h - 0.9, 0.2, 1.0, { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(34, 42, 66) })
+				-- 3D switch: track + a green / red knob
+				roundRect(m, bx(w / 2 - 3.6, 0, -0.8), 4.6, 1.9, 0.5, 0.95, { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(10, 12, 20) })
+				b.knobOn = part({ Shape = BALLS, Size = V(1.5), CFrame = bx(w / 2 - 3.6 - 1.15, 0, -1.2), Material = NEONM, Color = GREEN }, m)
+				b.knobOff = part({ Shape = BALLS, Size = V(1.5), CFrame = bx(w / 2 - 3.6 + 1.15, 0, -1.2), Material = NEONM, Color = RED }, m)
+				local sg = faceGui(w, h, -0.9)
+				tl(sg, "CUTSCENE", Enum.Font.GothamBlack, 54, Color3.new(1, 1, 1), UDim2.new(0.06, 0, 0.1, 0), UDim2.new(0.42, 0, 0.8, 0))
+				b.stateLabel = tl(sg, "ON", Enum.Font.GothamBlack, 54, GREEN, UDim2.new(0.46, 0, 0.1, 0), UDim2.new(0.2, 0, 0.8, 0), Enum.TextXAlignment.Center)
+				refreshToggle(b)
+			else -- the red X
+				addAcc(roundRect(m, rest, w, h, 0.9, 0.9, { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(210, 24, 34), Reflectance = 0.1 }))
+				addAcc(roundRect(m, bx(0, 0, 0.3), w + 0.7, h + 0.7, 0.4, 1.2, { Material = NEONM, Color = Color3.fromRGB(255, 60, 70) }))
+				for _, ang in ipairs({ 45, -45 }) do
+					part({ Size = Vector3.new(0.5, 2.3, 0.3), CFrame = bx(0, 0, -0.7) * CFrame.Angles(0, 0, math.rad(ang)), Material = NEONM, Color = Color3.new(1, 1, 1) }, m)
+				end
+			end
+			local hit = part({ Size = Vector3.new(w, h, 1.2), CFrame = bx(0, 0, -0.3), Transparency = 1 }, m)
+			hit.CanQuery = true
+			st.byPart[hit] = b
+			st.hitParts[#st.hitParts + 1] = hit
+			m.WorldPivot = rest
+			m.Parent = folder
+			m:ScaleTo(0.01)
+			st.buttons[#st.buttons + 1] = b
+			return b
+		end
+
+		local pos = { { -8.4, 4.6 }, { 8.4, 4.6 }, { -8.4, -3.0 }, { 8.4, -3.0 } }
+		for i, spec in ipairs(SPECS) do addButton("ability", spec, pos[i][1], pos[i][2], 15.4, 6.4) end
+		addButton("toggle", nil, 0, -9.4, 20, 3.4)
+		addButton("close", nil, 16, 10, 3.4, 3.4)
+		st.rp = RaycastParams.new()
+		st.rp.FilterType = Enum.RaycastFilterType.Include
+		st.rp.FilterDescendantsInstances = st.hitParts
+	end
+
+	local function click()
+		if not st or not M.isOpen or M.moving then return end
+		if (st.entrAll or 0) < 0.8 then return end
+		local b = st.hover
+		if not b then return end
+		b.press = 1
+		st.reticle.burst()
+		sfx(SND.click, 1.2, 1.2, 2)
+		if b.kind == "ability" then
+			local aim = st.aim
+			M.close(function()
+				env.__StellarAim = aim
+				b.spec.run()
+			end)
+		elseif b.kind == "toggle" then
+			env.__StellarCutsceneOn = not (env.__StellarCutsceneOn ~= false)
+			refreshToggle(b)
+		else
+			M.close()
+		end
+	end
+
+	-- one tick of everything alive in the menu (aim ray, hover, reticle, floating dust)
+	local function step(dt)
+		if not st then return end
+		local now = os.clock()
+		local cam = getCam()
+		local cp, look = cam.CFrame.Position, cam.CFrame.LookVector
+		local res = workspace:Raycast(cp, look * 150, st.rp)
+		local hoverBtn, hitPos, dist = nil, nil, 26
+		if res and st.byPart[res.Instance] then
+			hoverBtn = st.byPart[res.Instance]
+			hitPos = res.Position
+			dist = res.Distance
+		end
+		if not hitPos then hitPos = cp + look * dist end
+		if (st.entrAll or 0) < 0.75 then hoverBtn = nil end
+		if hoverBtn ~= st.hover then
+			st.hover = hoverBtn
+			if hoverBtn then sfx(SND.ping, 0.5, 1.5, 1) end
+		end
+		local hoverAcc = Color3.fromRGB(70, 210, 255)
+		for _, b in ipairs(st.buttons) do
+			b.hv = b.hv + (((b == hoverBtn) and 1 or 0) - b.hv) * math.min(1, dt * 14)
+			b.press = b.press * math.exp(-dt * 10)
+			b.model:ScaleTo(math.max(st.entr[b.i] or 0, 0.01) * (1 + 0.05 * b.hv))
+			local rot = (b.kind == "close") and CFrame.Angles(0, 0, b.hv * math.rad(90)) or CFrame.identity
+			b.model:PivotTo(b.rest * CFrame.new(0, math.sin(now * 1.2 + b.i) * 0.12, -1.4 * b.hv + 0.6 * b.press) * rot)
+			local acc = accentOf(b, now)
+			if b == hoverBtn then hoverAcc = acc end
+			local col = acc:Lerp(Color3.new(1, 1, 1), 0.55 * b.hv)
+			for _, p in ipairs(b.acc) do p.Color = col end
+		end
+		local pulse = 0.5 + 0.5 * math.sin(now * 2)
+		local rimCol = Color3.fromRGB(70, 210, 255):Lerp(Color3.fromRGB(150, 120, 255), pulse)
+		for _, p in ipairs(st.rim) do p.Color = rimCol end
+		local hvAny = hoverBtn and hoverBtn.hv or 0
+		st.reticle.update(hitPos, cp, dist, hvAny, hoverBtn and hoverAcc or Color3.fromRGB(70, 210, 255), now, dt)
+		for i, mt in ipairs(st.motes) do
+			mt.p.Position = mt.base + Vector3.new(math.sin(now * 0.4 + i) * 2, math.sin(now * 0.7 + i * 1.3) * 2.5, math.cos(now * 0.35 + i) * 2)
+		end
+	end
+
+	local function openSeq()
+		M.moving = true
+		local cc, bl
+		local ok, err = pcall(function()
+			sfx(SND.whoosh, 1.4, 1.5, 3)
+			local cam = getCam()
+			local char = player.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			if not root then return end
+			local aim = { Origin = cam.CFrame.Position, Direction = cam.CFrame.LookVector }
+			cc = Instance.new("ColorCorrectionEffect")
+			bl = Instance.new("BloomEffect")
+			bl.Intensity = 0; bl.Size = 40; bl.Threshold = 0.9
+			cc.Parent = Lighting
+			bl.Parent = Lighting
+			runFor(0.35, function(a) cc.Brightness = smooth(a); bl.Intensity = 2 * a end) -- the world washes out to white...
+			local folder = Instance.new("Folder")
+			folder.Name = "StellarMenu3D"
+			folder.Parent = workspace
+			local rp0 = RaycastParams.new()
+			rp0.FilterType = Enum.RaycastFilterType.Exclude
+			rp0.FilterDescendantsInstances = { char }
+			local gh = workspace:Raycast(root.Position, Vector3.new(0, -12, 0), rp0)
+			local floorY = gh and gh.Position.Y or (root.Position.Y - 3)
+			st = { folder = folder, aim = aim, buttons = {}, byPart = {}, hitParts = {}, entr = {}, entrAll = 0, hover = nil, hidden = {}, motes = {} }
+			buildRoom(folder, root.Position, floorY)    -- ...and the white void takes its place
+			st.hidden = hideSurroundings(root.Position, folder)
+			setControls(false)
+			buildPanels(folder, cam, floorY)
+			for i = 1, 40 do
+				local base = Vector3.new(root.Position.X + (math.random() * 2 - 1) * 60, floorY + 3 + math.random() * 40, root.Position.Z + (math.random() * 2 - 1) * 60)
+				st.motes[i] = { base = base, p = part({ Size = V(0.35), Position = base, Color = Color3.fromRGB(150, 190, 255), Material = NEONM, Transparency = 0.2 }, folder) }
+			end
+			st.reticle = makeReticle(folder)
+			M.isOpen = true
+			RunService:BindToRenderStep("StellarMenu3D", Enum.RenderPriority.Camera.Value + 1, step)
+			runFor(0.75, function(a)  -- fade out of the white; the panels pop in one by one
+				cc.Brightness = 1 - smooth(a)
+				bl.Intensity = 2 * (1 - a)
+				st.entrAll = a
+				for _, b in ipairs(st.buttons) do
+					st.entr[b.i] = easeOutBack(math.clamp((a * 1.5 - (b.i - 1) * 0.1) / 0.6, 0, 1))
+				end
+			end)
+			st.entrAll = 1
+			for _, b in ipairs(st.buttons) do st.entr[b.i] = 1 end
+		end)
+		if cc then cc:Destroy() end
+		if bl then bl:Destroy() end
+		if not ok then
+			warn("[StellarRemote] menu: " .. tostring(err))
+			teardown()
+		end
+		M.moving = false
+	end
+
+	local function closeSeq(after)
+		M.moving = true
+		local cc, bl
+		pcall(function()
+			sfx(SND.whoosh, 1.2, 1.2, 3)
+			cc = Instance.new("ColorCorrectionEffect")
+			bl = Instance.new("BloomEffect")
+			bl.Intensity = 0; bl.Size = 40; bl.Threshold = 0.9
+			cc.Parent = Lighting
+			bl.Parent = Lighting
+			runFor(0.3, function(a) cc.Brightness = smooth(a); bl.Intensity = 2 * a end)
+			teardown()
+			runFor(0.4, function(a) cc.Brightness = 1 - smooth(a); bl.Intensity = 2 * (1 - a) end)
+		end)
+		teardown()
+		if cc then cc:Destroy() end
+		if bl then bl:Destroy() end
+		M.moving = false
+		if after then after() end
+	end
+
+	function M.open()
+		if M.moving or M.isOpen or busy then return end
+		task.spawn(openSeq)
+	end
+	function M.close(after)
+		if M.moving then return end
+		if not M.isOpen then
+			if after then after() end
+			return
+		end
+		task.spawn(closeSeq, after)
+	end
+
+	conns[#conns + 1] = UserInputService.TouchTapInWorld:Connect(function(_, processed)
+		if not processed then click() end
+	end)
+	conns[#conns + 1] = UserInputService.InputBegan:Connect(function(input, gp)
+		if gp then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonA or input.KeyCode == Enum.KeyCode.ButtonR2 then
+			click()
+		elseif input.KeyCode == Enum.KeyCode.R and not M.isOpen then
+			M.open() -- keyboard fallback if the game hides the hotbar
+		end
+	end)
+	return M
+end
+
 ------------------------------------------------------------------------
 -- START
 ------------------------------------------------------------------------
-menu = buildMenu()
+menu = build3DMenu()
 track(menu.gui)
 giveTool()
 conns[#conns + 1] = player.CharacterAdded:Connect(function()
@@ -4160,8 +4599,9 @@ end)
 env.__StellarRemoteCleanup = function()
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
 	if env.__StellarTessCleanup then pcall(env.__StellarTessCleanup) end
+	if env.__StellarMenuDestroy then pcall(env.__StellarMenuDestroy) end
 	for _, o in ipairs(objs) do pcall(function() o:Destroy() end) end
 	pcall(function() RunService:UnbindFromRenderStep("StellarShake") end)
 end
 
-print("[Stellar Remote v6] ready - equip the remote (or tap SR), set CUTSCENE ON/OFF, press SS-01, SS-03, SS-04 or SS-05.")
+print("[Stellar Remote v7] ready - aim, tap the remote (or press R), then pick a weapon in the white void.")
